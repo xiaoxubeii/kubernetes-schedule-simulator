@@ -10,6 +10,8 @@ import (
 	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/scheduler/defaults"
 	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/scheduler/factory"
 	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/scheduler/queue"
+	"k8s.io/kubernetes/pkg/scheduler/algorithm/predicates"
+	"k8s.io/kubernetes/pkg/scheduler/core/equivalence"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -18,11 +20,12 @@ import (
 )
 
 type Simulator struct {
-	scheduler     algorithm.ScheduleAlgorithm
-	nodeLister    algorithm.NodeLister
-	nodes         []*v1.Node
-	pods          []*v1.Pod
-	schedulecache cache.Cache
+	scheduler           algorithm.ScheduleAlgorithm
+	nodeLister          algorithm.NodeLister
+	nodes               []*v1.Node
+	pods                []*v1.Pod
+	schedulecache       cache.Cache
+	equivalencePodCache *equivalence.Cache
 }
 
 func (s *Simulator) NextPod() *v1.Pod {
@@ -37,6 +40,20 @@ func (s *Simulator) NextPod() *v1.Pod {
 func (s *Simulator) Bind(nodeName string, pod *v1.Pod) {
 	pod.Spec.NodeName = nodeName
 	s.schedulecache.AddPod(pod)
+}
+
+func (s *Simulator) addNodeToCache(obj interface{}) {
+	node, ok := obj.(*v1.Node)
+	if !ok {
+		glog.Errorf("cannot convert to *v1.Node: %v", obj)
+		return
+	}
+
+	s.equivalencePodCache.GetNodeCache(node.GetName())
+
+	if err := s.schedulecache.AddNode(node); err != nil {
+		glog.Errorf("scheduler cache AddNode failed: %v", err)
+	}
 }
 
 func (s *Simulator) Schedule() (r map[string]string, fail map[string]string) {
@@ -89,10 +106,9 @@ func NewSimulator(nodes []*v1.Node, pods []*v1.Pod) *Simulator {
 	provider, _ := factory.GetAlgorithmProvider(kfactory.DefaultProvider)
 	stop := make(chan struct{})
 	schedulerCache := cache.New(30*time.Second, stop)
-	for _, n := range nodes {
-		schedulerCache.AddNode(n)
-	}
 	podQueue := queue.NewSchedulingQueue(stop)
+	ecache := equivalence.NewCache(predicates.Ordering())
+
 	config := factory.Config{
 		NodeLister:        &fakeNodeLister{nodes},
 		ServiceLister:     &fakeServiceLister{},
@@ -106,7 +122,7 @@ func NewSimulator(nodes []*v1.Node, pods []*v1.Pod) *Simulator {
 	priorityMetaProducer, _ := config.GetPriorityMetadataProducer()
 	algo := NewGenericScheduler(
 		schedulerCache,
-		nil,
+		ecache,
 		podQueue,
 		predicateFuncs,
 		predicateMetaProducer,
@@ -121,5 +137,17 @@ func NewSimulator(nodes []*v1.Node, pods []*v1.Pod) *Simulator {
 		true,
 		100,
 	)
-	return &Simulator{scheduler: algo, nodes: nodes, pods: pods, nodeLister: config.NodeLister, schedulecache: schedulerCache}
+
+	s := &Simulator{
+		scheduler: algo, nodes: nodes, pods: pods, nodeLister: config.NodeLister,
+		schedulecache:       schedulerCache,
+		equivalencePodCache: ecache,
+	}
+
+	for _, n := range nodes {
+		s.addNodeToCache(n)
+	}
+
+	return s
+
 }
