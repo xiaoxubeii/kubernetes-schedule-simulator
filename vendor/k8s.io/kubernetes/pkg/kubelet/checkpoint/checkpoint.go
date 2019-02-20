@@ -17,15 +17,20 @@ limitations under the License.
 package checkpoint
 
 import (
-	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 
-	"k8s.io/klog"
+	"github.com/dchest/safefile"
+	"github.com/ghodss/yaml"
+	"github.com/golang/glog"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/kubernetes/pkg/apis/core"
-	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
-	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager/checksum"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 const (
@@ -34,44 +39,54 @@ const (
 	podPrefix = "Pod"
 )
 
-type PodCheckpoint interface {
-	checkpointmanager.Checkpoint
-	GetPod() *v1.Pod
+// Manager is the interface used to manage checkpoints
+// which involves writing resources to disk to recover
+// during restart or failure scenarios.
+// https://github.com/kubernetes/community/pull/1241/files
+type Manager interface {
+	// LoadPods will load checkpointed Pods from disk
+	LoadPods() ([]*v1.Pod, error)
+
+	// WritePod will serialize a Pod to disk
+	WritePod(pod *v1.Pod) error
+
+	// Deletes the checkpoint of the given pod from disk
+	DeletePod(pod *v1.Pod) error
 }
 
-// Data to be stored as checkpoint
-type Data struct {
-	Pod      *v1.Pod
-	Checksum checksum.Checksum
+var instance Manager
+var mutex = &sync.Mutex{}
+
+// fileCheckPointManager - is a checkpointer that writes contents to disk
+// The type information of the resource objects are encoded in the name
+type fileCheckPointManager struct {
+	path string
 }
 
-// NewPodCheckpoint returns new pod checkpoint
-func NewPodCheckpoint(pod *v1.Pod) PodCheckpoint {
-	return &Data{Pod: pod}
+// NewCheckpointManager will create a Manager that points to the following path
+func NewCheckpointManager(path string) Manager {
+	// NOTE: This is a precaution; current implementation should not run
+	// multiple checkpoint managers.
+	mutex.Lock()
+	defer mutex.Unlock()
+	instance = &fileCheckPointManager{path: path}
+	return instance
 }
 
-// MarshalCheckpoint returns marshalled data
-func (cp *Data) MarshalCheckpoint() ([]byte, error) {
-	cp.Checksum = checksum.New(*cp.Pod)
-	return json.Marshal(*cp)
+// GetInstance will return the current Manager, there should be only one.
+func GetInstance() Manager {
+	mutex.Lock()
+	defer mutex.Unlock()
+	return instance
 }
 
-// UnmarshalCheckpoint returns unmarshalled data
-func (cp *Data) UnmarshalCheckpoint(blob []byte) error {
-	return json.Unmarshal(blob, cp)
-}
-
-// VerifyChecksum verifies that passed checksum is same as calculated checksum
-func (cp *Data) VerifyChecksum() error {
-	return cp.Checksum.Verify(*cp.Pod)
-}
-
-func (cp *Data) GetPod() *v1.Pod {
-	return cp.Pod
+// loadPod will load Pod Checkpoint yaml file.
+func (fcp *fileCheckPointManager) loadPod(file string) (*v1.Pod, error) {
+	return util.LoadPodFromFile(file)
 }
 
 // checkAnnotations will validate the checkpoint annotations exist on the Pod
-func checkAnnotations(pod *v1.Pod) bool {
+func (fcp *fileCheckPointManager) checkAnnotations(pod *v1.Pod) bool {
 	if podAnnotations := pod.GetAnnotations(); podAnnotations != nil {
 		if podAnnotations[core.BootstrapCheckpointAnnotationKey] == "true" {
 			return true
@@ -80,49 +95,57 @@ func checkAnnotations(pod *v1.Pod) bool {
 	return false
 }
 
-//getPodKey returns the full qualified path for the pod checkpoint
-func getPodKey(pod *v1.Pod) string {
-	return fmt.Sprintf("%s%s%v.yaml", podPrefix, delimiter, pod.GetUID())
+// getPodPath returns the full qualified path for the pod checkpoint
+func (fcp *fileCheckPointManager) getPodPath(pod *v1.Pod) string {
+	return fmt.Sprintf("%v/Pod%v%v.yaml", fcp.path, delimiter, pod.GetUID())
 }
 
 // LoadPods Loads All Checkpoints from disk
-func LoadPods(cpm checkpointmanager.CheckpointManager) ([]*v1.Pod, error) {
-	pods := make([]*v1.Pod, 0)
-
-	var err error
-	checkpointKeys := []string{}
-	checkpointKeys, err = cpm.ListCheckpoints()
+func (fcp *fileCheckPointManager) LoadPods() ([]*v1.Pod, error) {
+	checkpoints := make([]*v1.Pod, 0)
+	files, err := ioutil.ReadDir(fcp.path)
 	if err != nil {
-		klog.Errorf("Failed to list checkpoints: %v", err)
+		return nil, err
 	}
-
-	for _, key := range checkpointKeys {
-		checkpoint := NewPodCheckpoint(nil)
-		err := cpm.GetCheckpoint(key, checkpoint)
-		if err != nil {
-			klog.Errorf("Failed to retrieve checkpoint for pod %q: %v", key, err)
-			continue
+	for _, f := range files {
+		// get just the filename
+		_, fname := filepath.Split(f.Name())
+		// Get just the Resource from "Resource_Name"
+		fnfields := strings.Split(fname, delimiter)
+		switch fnfields[0] {
+		case podPrefix:
+			pod, err := fcp.loadPod(fmt.Sprintf("%s/%s", fcp.path, f.Name()))
+			if err != nil {
+				return nil, err
+			}
+			checkpoints = append(checkpoints, pod)
+		default:
+			glog.Warningf("Unsupported checkpoint file detected %v", f)
 		}
-		pods = append(pods, checkpoint.GetPod())
 	}
-	return pods, nil
+	return checkpoints, nil
 }
 
-// WritePod a checkpoint to a file on disk if annotation is present
-func WritePod(cpm checkpointmanager.CheckpointManager, pod *v1.Pod) error {
+// Writes a checkpoint to a file on disk if annotation is present
+func (fcp *fileCheckPointManager) WritePod(pod *v1.Pod) error {
 	var err error
-	if checkAnnotations(pod) {
-		data := NewPodCheckpoint(pod)
-		err = cpm.CreateCheckpoint(getPodKey(pod), data)
+	if fcp.checkAnnotations(pod) {
+		if blob, err := yaml.Marshal(pod); err == nil {
+			err = safefile.WriteFile(fcp.getPodPath(pod), blob, 0644)
+		}
 	} else {
 		// This is to handle an edge where a pod update could remove
 		// an annotation and the checkpoint should then be removed.
-		err = cpm.RemoveCheckpoint(getPodKey(pod))
+		err = fcp.DeletePod(pod)
 	}
 	return err
 }
 
-// DeletePod deletes a checkpoint from disk if present
-func DeletePod(cpm checkpointmanager.CheckpointManager, pod *v1.Pod) error {
-	return cpm.RemoveCheckpoint(getPodKey(pod))
+// Deletes a checkpoint from disk if present
+func (fcp *fileCheckPointManager) DeletePod(pod *v1.Pod) error {
+	podPath := fcp.getPodPath(pod)
+	if err := os.Remove(podPath); !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

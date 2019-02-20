@@ -25,7 +25,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// getCurrentVersionVal gets value of specified key from registry.
+// getCurrentVersionVal gets value of speficied key from registry.
 func getCurrentVersionVal(key string) (string, error) {
 	var h windows.Handle
 	if err := windows.RegOpenKeyEx(windows.HKEY_LOCAL_MACHINE,
@@ -69,39 +69,20 @@ func getVersionRevision() (uint16, error) {
 
 // getKernelVersion gets the version of windows kernel.
 func getKernelVersion() (string, error) {
-	// Get CurrentBuildNumber.
-	buildNumber, err := getCurrentVersionVal("CurrentBuildNumber")
+	ver, err := windows.GetVersion()
 	if err != nil {
 		return "", err
 	}
 
-	// Get CurrentMajorVersionNumber.
-	majorVersionNumberString, err := getCurrentVersionVal("CurrentMajorVersionNumber")
-	if err != nil {
-		return "", err
-	}
-	majorVersionNumber, err := windows.UTF16FromString(majorVersionNumberString)
-	if err != nil {
-		return "", err
-	}
-
-	// Get CurrentMinorVersionNumber.
-	minorVersionNumberString, err := getCurrentVersionVal("CurrentMinorVersionNumber")
-	if err != nil {
-		return "", err
-	}
-	minorVersionNumber, err := windows.UTF16FromString(minorVersionNumberString)
-	if err != nil {
-		return "", err
-	}
-
-	// Get UBR.
 	revision, err := getVersionRevision()
 	if err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("%d.%d.%s.%d\n", majorVersionNumber[0], minorVersionNumber[0], buildNumber, revision), nil
+	major := ver & 0xFF
+	minor := (ver >> 8) & 0xFF
+	build := (ver >> 16) & 0xFFFF
+	return fmt.Sprintf("%d.%d.%05d.%d\n", major, minor, build, revision), nil
 }
 
 // getOSImageVersion gets the osImage name and version.

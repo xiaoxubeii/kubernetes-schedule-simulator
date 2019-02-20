@@ -23,14 +23,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
 )
 
 type fcAttacher struct {
@@ -40,26 +41,18 @@ type fcAttacher struct {
 
 var _ volume.Attacher = &fcAttacher{}
 
-var _ volume.DeviceMounter = &fcAttacher{}
-
 var _ volume.AttachableVolumePlugin = &fcPlugin{}
-
-var _ volume.DeviceMountableVolumePlugin = &fcPlugin{}
 
 func (plugin *fcPlugin) NewAttacher() (volume.Attacher, error) {
 	return &fcAttacher{
 		host:    plugin.host,
-		manager: &fcUtil{},
+		manager: &FCUtil{},
 	}, nil
-}
-
-func (plugin *fcPlugin) NewDeviceMounter() (volume.DeviceMounter, error) {
-	return plugin.NewAttacher()
 }
 
 func (plugin *fcPlugin) GetDeviceMountRefs(deviceMountPath string) ([]string, error) {
 	mounter := plugin.host.GetMounter(plugin.GetPluginName())
-	return mounter.GetMountRefs(deviceMountPath)
+	return mount.GetMountRefs(mounter, deviceMountPath)
 }
 
 func (attacher *fcAttacher) Attach(spec *volume.Spec, nodeName types.NodeName) (string, error) {
@@ -78,7 +71,7 @@ func (attacher *fcAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName ty
 func (attacher *fcAttacher) WaitForAttach(spec *volume.Spec, devicePath string, _ *v1.Pod, timeout time.Duration) (string, error) {
 	mounter, err := volumeSpecToMounter(spec, attacher.host)
 	if err != nil {
-		klog.Warningf("failed to get fc mounter: %v", err)
+		glog.Warningf("failed to get fc mounter: %v", err)
 		return "", err
 	}
 	return attacher.manager.AttachDisk(*mounter)
@@ -88,7 +81,7 @@ func (attacher *fcAttacher) GetDeviceMountPath(
 	spec *volume.Spec) (string, error) {
 	mounter, err := volumeSpecToMounter(spec, attacher.host)
 	if err != nil {
-		klog.Warningf("failed to get fc mounter: %v", err)
+		glog.Warningf("failed to get fc mounter: %v", err)
 		return "", err
 	}
 
@@ -120,7 +113,7 @@ func (attacher *fcAttacher) MountDevice(spec *volume.Spec, devicePath string, de
 	}
 	if notMnt {
 		diskMounter := &mount.SafeFormatAndMount{Interface: mounter, Exec: attacher.host.GetExec(fcPluginName)}
-		mountOptions := volumeutil.MountOptionFromSpec(spec, options...)
+		mountOptions := volume.MountOptionFromSpec(spec, options...)
 		err = diskMounter.FormatAndMount(devicePath, deviceMountPath, volumeSource.FSType, mountOptions)
 		if err != nil {
 			os.Remove(deviceMountPath)
@@ -137,17 +130,11 @@ type fcDetacher struct {
 
 var _ volume.Detacher = &fcDetacher{}
 
-var _ volume.DeviceUnmounter = &fcDetacher{}
-
 func (plugin *fcPlugin) NewDetacher() (volume.Detacher, error) {
 	return &fcDetacher{
 		mounter: plugin.host.GetMounter(plugin.GetPluginName()),
-		manager: &fcUtil{},
+		manager: &FCUtil{},
 	}, nil
-}
-
-func (plugin *fcPlugin) NewDeviceUnmounter() (volume.DeviceUnmounter, error) {
-	return plugin.NewDetacher()
 }
 
 func (detacher *fcDetacher) Detach(volumeName string, nodeName types.NodeName) error {
@@ -158,7 +145,7 @@ func (detacher *fcDetacher) UnmountDevice(deviceMountPath string) error {
 	// Specify device name for DetachDisk later
 	devName, _, err := mount.GetDeviceNameFromMount(detacher.mounter, deviceMountPath)
 	if err != nil {
-		klog.Errorf("fc: failed to get device from mnt: %s\nError: %v", deviceMountPath, err)
+		glog.Errorf("fc: failed to get device from mnt: %s\nError: %v", deviceMountPath, err)
 		return err
 	}
 	// Unmount for deviceMountPath(=globalPDPath)
@@ -171,7 +158,7 @@ func (detacher *fcDetacher) UnmountDevice(deviceMountPath string) error {
 	if err != nil {
 		return fmt.Errorf("fc: failed to detach disk: %s\nError: %v", devName, err)
 	}
-	klog.V(4).Infof("fc: successfully detached disk: %s", devName)
+	glog.V(4).Infof("fc: successfully detached disk: %s", devName)
 	return nil
 }
 
@@ -202,26 +189,24 @@ func volumeSpecToMounter(spec *volume.Spec, host volume.VolumeHost) (*fcDiskMoun
 	}
 	// TODO: remove feature gate check after no longer needed
 	if utilfeature.DefaultFeatureGate.Enabled(features.BlockVolume) {
-		volumeMode, err := volumeutil.GetVolumeMode(spec)
+		volumeMode, err := volumehelper.GetVolumeMode(spec)
 		if err != nil {
 			return nil, err
 		}
-		klog.V(5).Infof("fc: volumeSpecToMounter volumeMode %s", volumeMode)
+		glog.V(5).Infof("fc: volumeSpecToMounter volumeMode %s", volumeMode)
 		return &fcDiskMounter{
 			fcDisk:     fcDisk,
 			fsType:     fc.FSType,
 			volumeMode: volumeMode,
 			readOnly:   readOnly,
-			mounter:    volumeutil.NewSafeFormatAndMountFromHost(fcPluginName, host),
-			deviceUtil: volumeutil.NewDeviceHandler(volumeutil.NewIOHandler()),
+			mounter:    volumehelper.NewSafeFormatAndMountFromHost(fcPluginName, host),
 		}, nil
 	}
 	return &fcDiskMounter{
-		fcDisk:     fcDisk,
-		fsType:     fc.FSType,
-		readOnly:   readOnly,
-		mounter:    volumeutil.NewSafeFormatAndMountFromHost(fcPluginName, host),
-		deviceUtil: volumeutil.NewDeviceHandler(volumeutil.NewIOHandler()),
+		fcDisk:   fcDisk,
+		fsType:   fc.FSType,
+		readOnly: readOnly,
+		mounter:  volumehelper.NewSafeFormatAndMountFromHost(fcPluginName, host),
 	}, nil
 }
 
@@ -230,7 +215,6 @@ func volumeSpecToUnmounter(mounter mount.Interface) *fcDiskUnmounter {
 		fcDisk: &fcDisk{
 			io: &osIOHandler{},
 		},
-		mounter:    mounter,
-		deviceUtil: volumeutil.NewDeviceHandler(volumeutil.NewIOHandler()),
+		mounter: mounter,
 	}
 }

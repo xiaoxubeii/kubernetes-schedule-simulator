@@ -22,7 +22,6 @@ import (
 	"errors"
 )
 
-// RunInResourceContainer creates resource-only containerName unsupported.
 func RunInResourceContainer(containerName string) error {
 	return errors.New("resource-only containers unsupported in this platform")
 }

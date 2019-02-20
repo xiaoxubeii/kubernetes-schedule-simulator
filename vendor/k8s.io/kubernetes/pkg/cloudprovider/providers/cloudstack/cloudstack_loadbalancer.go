@@ -17,15 +17,13 @@ limitations under the License.
 package cloudstack
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 
+	"github.com/golang/glog"
 	"github.com/xanzy/go-cloudstack/cloudstack"
-	"k8s.io/klog"
-
 	"k8s.io/api/core/v1"
-	cloudprovider "k8s.io/cloud-provider"
+	"k8s.io/kubernetes/pkg/cloudprovider"
 )
 
 type loadBalancer struct {
@@ -42,8 +40,8 @@ type loadBalancer struct {
 }
 
 // GetLoadBalancer returns whether the specified load balancer exists, and if so, what its status is.
-func (cs *CSCloud) GetLoadBalancer(ctx context.Context, clusterName string, service *v1.Service) (*v1.LoadBalancerStatus, bool, error) {
-	klog.V(4).Infof("GetLoadBalancer(%v, %v, %v)", clusterName, service.Namespace, service.Name)
+func (cs *CSCloud) GetLoadBalancer(clusterName string, service *v1.Service) (*v1.LoadBalancerStatus, bool, error) {
+	glog.V(4).Infof("GetLoadBalancer(%v, %v, %v)", clusterName, service.Namespace, service.Name)
 
 	// Get the load balancer details and existing rules.
 	lb, err := cs.getLoadBalancer(service)
@@ -56,7 +54,7 @@ func (cs *CSCloud) GetLoadBalancer(ctx context.Context, clusterName string, serv
 		return nil, false, nil
 	}
 
-	klog.V(4).Infof("Found a load balancer associated with IP %v", lb.ipAddr)
+	glog.V(4).Infof("Found a load balancer associated with IP %v", lb.ipAddr)
 
 	status := &v1.LoadBalancerStatus{}
 	status.Ingress = append(status.Ingress, v1.LoadBalancerIngress{IP: lb.ipAddr})
@@ -65,8 +63,8 @@ func (cs *CSCloud) GetLoadBalancer(ctx context.Context, clusterName string, serv
 }
 
 // EnsureLoadBalancer creates a new load balancer, or updates the existing one. Returns the status of the balancer.
-func (cs *CSCloud) EnsureLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) (status *v1.LoadBalancerStatus, err error) {
-	klog.V(4).Infof("EnsureLoadBalancer(%v, %v, %v, %v, %v, %v)", clusterName, service.Namespace, service.Name, service.Spec.LoadBalancerIP, service.Spec.Ports, nodes)
+func (cs *CSCloud) EnsureLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) (status *v1.LoadBalancerStatus, err error) {
+	glog.V(4).Infof("EnsureLoadBalancer(%v, %v, %v, %v, %v, %v)", clusterName, service.Namespace, service.Name, service.Spec.LoadBalancerIP, service.Spec.Ports, nodes)
 
 	if len(service.Spec.Ports) == 0 {
 		return nil, fmt.Errorf("requested load balancer with no ports")
@@ -104,14 +102,14 @@ func (cs *CSCloud) EnsureLoadBalancer(ctx context.Context, clusterName string, s
 			defer func(lb *loadBalancer) {
 				if err != nil {
 					if err := lb.releaseLoadBalancerIP(); err != nil {
-						klog.Errorf(err.Error())
+						glog.Errorf(err.Error())
 					}
 				}
 			}(lb)
 		}
 	}
 
-	klog.V(4).Infof("Load balancer %v is associated with IP %v", lb.name, lb.ipAddr)
+	glog.V(4).Infof("Load balancer %v is associated with IP %v", lb.name, lb.ipAddr)
 
 	for _, port := range service.Spec.Ports {
 		// All ports have their own load balancer rule, so add the port to lbName to keep the names unique.
@@ -123,14 +121,14 @@ func (cs *CSCloud) EnsureLoadBalancer(ctx context.Context, clusterName string, s
 			return nil, err
 		}
 		if exists && !needsUpdate {
-			klog.V(4).Infof("Load balancer rule %v is up-to-date", lbRuleName)
+			glog.V(4).Infof("Load balancer rule %v is up-to-date", lbRuleName)
 			// Delete the rule from the map, to prevent it being deleted.
 			delete(lb.rules, lbRuleName)
 			continue
 		}
 
 		if needsUpdate {
-			klog.V(4).Infof("Updating load balancer rule: %v", lbRuleName)
+			glog.V(4).Infof("Updating load balancer rule: %v", lbRuleName)
 			if err := lb.updateLoadBalancerRule(lbRuleName); err != nil {
 				return nil, err
 			}
@@ -139,13 +137,13 @@ func (cs *CSCloud) EnsureLoadBalancer(ctx context.Context, clusterName string, s
 			continue
 		}
 
-		klog.V(4).Infof("Creating load balancer rule: %v", lbRuleName)
+		glog.V(4).Infof("Creating load balancer rule: %v", lbRuleName)
 		lbRule, err := lb.createLoadBalancerRule(lbRuleName, port)
 		if err != nil {
 			return nil, err
 		}
 
-		klog.V(4).Infof("Assigning hosts (%v) to load balancer rule: %v", lb.hostIDs, lbRuleName)
+		glog.V(4).Infof("Assigning hosts (%v) to load balancer rule: %v", lb.hostIDs, lbRuleName)
 		if err = lb.assignHostsToRule(lbRule, lb.hostIDs); err != nil {
 			return nil, err
 		}
@@ -154,7 +152,7 @@ func (cs *CSCloud) EnsureLoadBalancer(ctx context.Context, clusterName string, s
 
 	// Cleanup any rules that are now still in the rules map, as they are no longer needed.
 	for _, lbRule := range lb.rules {
-		klog.V(4).Infof("Deleting obsolete load balancer rule: %v", lbRule.Name)
+		glog.V(4).Infof("Deleting obsolete load balancer rule: %v", lbRule.Name)
 		if err := lb.deleteLoadBalancerRule(lbRule); err != nil {
 			return nil, err
 		}
@@ -167,8 +165,8 @@ func (cs *CSCloud) EnsureLoadBalancer(ctx context.Context, clusterName string, s
 }
 
 // UpdateLoadBalancer updates hosts under the specified load balancer.
-func (cs *CSCloud) UpdateLoadBalancer(ctx context.Context, clusterName string, service *v1.Service, nodes []*v1.Node) error {
-	klog.V(4).Infof("UpdateLoadBalancer(%v, %v, %v, %v)", clusterName, service.Namespace, service.Name, nodes)
+func (cs *CSCloud) UpdateLoadBalancer(clusterName string, service *v1.Service, nodes []*v1.Node) error {
+	glog.V(4).Infof("UpdateLoadBalancer(%v, %v, %v, %v)", clusterName, service.Namespace, service.Name, nodes)
 
 	// Get the load balancer details and existing rules.
 	lb, err := cs.getLoadBalancer(service)
@@ -194,14 +192,14 @@ func (cs *CSCloud) UpdateLoadBalancer(ctx context.Context, clusterName string, s
 		assign, remove := symmetricDifference(lb.hostIDs, l.LoadBalancerRuleInstances)
 
 		if len(assign) > 0 {
-			klog.V(4).Infof("Assigning new hosts (%v) to load balancer rule: %v", assign, lbRule.Name)
+			glog.V(4).Infof("Assigning new hosts (%v) to load balancer rule: %v", assign, lbRule.Name)
 			if err := lb.assignHostsToRule(lbRule, assign); err != nil {
 				return err
 			}
 		}
 
 		if len(remove) > 0 {
-			klog.V(4).Infof("Removing old hosts (%v) from load balancer rule: %v", assign, lbRule.Name)
+			glog.V(4).Infof("Removing old hosts (%v) from load balancer rule: %v", assign, lbRule.Name)
 			if err := lb.removeHostsFromRule(lbRule, remove); err != nil {
 				return err
 			}
@@ -213,8 +211,8 @@ func (cs *CSCloud) UpdateLoadBalancer(ctx context.Context, clusterName string, s
 
 // EnsureLoadBalancerDeleted deletes the specified load balancer if it exists, returning
 // nil if the load balancer specified either didn't exist or was successfully deleted.
-func (cs *CSCloud) EnsureLoadBalancerDeleted(ctx context.Context, clusterName string, service *v1.Service) error {
-	klog.V(4).Infof("EnsureLoadBalancerDeleted(%v, %v, %v)", clusterName, service.Namespace, service.Name)
+func (cs *CSCloud) EnsureLoadBalancerDeleted(clusterName string, service *v1.Service) error {
+	glog.V(4).Infof("EnsureLoadBalancerDeleted(%v, %v, %v)", clusterName, service.Namespace, service.Name)
 
 	// Get the load balancer details and existing rules.
 	lb, err := cs.getLoadBalancer(service)
@@ -223,14 +221,14 @@ func (cs *CSCloud) EnsureLoadBalancerDeleted(ctx context.Context, clusterName st
 	}
 
 	for _, lbRule := range lb.rules {
-		klog.V(4).Infof("Deleting load balancer rule: %v", lbRule.Name)
+		glog.V(4).Infof("Deleting load balancer rule: %v", lbRule.Name)
 		if err := lb.deleteLoadBalancerRule(lbRule); err != nil {
 			return err
 		}
 	}
 
 	if lb.ipAddr != "" && lb.ipAddr != service.Spec.LoadBalancerIP {
-		klog.V(4).Infof("Releasing load balancer IP: %v", lb.ipAddr)
+		glog.V(4).Infof("Releasing load balancer IP: %v", lb.ipAddr)
 		if err := lb.releaseLoadBalancerIP(); err != nil {
 			return err
 		}
@@ -239,16 +237,11 @@ func (cs *CSCloud) EnsureLoadBalancerDeleted(ctx context.Context, clusterName st
 	return nil
 }
 
-// GetLoadBalancerName retrieves the name of the LoadBalancer.
-func (cs *CSCloud) GetLoadBalancerName(ctx context.Context, clusterName string, service *v1.Service) string {
-	return cloudprovider.DefaultLoadBalancerName(service)
-}
-
 // getLoadBalancer retrieves the IP address and ID and all the existing rules it can find.
 func (cs *CSCloud) getLoadBalancer(service *v1.Service) (*loadBalancer, error) {
 	lb := &loadBalancer{
 		CloudStackClient: cs.client,
-		name:             cs.GetLoadBalancerName(context.TODO(), "", service),
+		name:             cloudprovider.GetLoadBalancerName(service),
 		projectID:        cs.projectID,
 		rules:            make(map[string]*cloudstack.LoadBalancerRule),
 	}
@@ -270,14 +263,14 @@ func (cs *CSCloud) getLoadBalancer(service *v1.Service) (*loadBalancer, error) {
 		lb.rules[lbRule.Name] = lbRule
 
 		if lb.ipAddr != "" && lb.ipAddr != lbRule.Publicip {
-			klog.Warningf("Load balancer for service %v/%v has rules associated with different IP's: %v, %v", service.Namespace, service.Name, lb.ipAddr, lbRule.Publicip)
+			glog.Warningf("Load balancer for service %v/%v has rules associated with different IP's: %v, %v", service.Namespace, service.Name, lb.ipAddr, lbRule.Publicip)
 		}
 
 		lb.ipAddr = lbRule.Publicip
 		lb.ipAddrID = lbRule.Publicipid
 	}
 
-	klog.V(4).Infof("Load balancer %v contains %d rule(s)", lb.name, len(lb.rules))
+	glog.V(4).Infof("Load balancer %v contains %d rule(s)", lb.name, len(lb.rules))
 
 	return lb, nil
 }
@@ -335,7 +328,7 @@ func (lb *loadBalancer) getLoadBalancerIP(loadBalancerIP string) error {
 
 // getPublicIPAddressID retrieves the ID of the given IP, and sets the address and it's ID.
 func (lb *loadBalancer) getPublicIPAddress(loadBalancerIP string) error {
-	klog.V(4).Infof("Retrieve load balancer IP details: %v", loadBalancerIP)
+	glog.V(4).Infof("Retrieve load balancer IP details: %v", loadBalancerIP)
 
 	p := lb.Address.NewListPublicIpAddressesParams()
 	p.SetIpaddress(loadBalancerIP)
@@ -362,7 +355,7 @@ func (lb *loadBalancer) getPublicIPAddress(loadBalancerIP string) error {
 
 // associatePublicIPAddress associates a new IP and sets the address and it's ID.
 func (lb *loadBalancer) associatePublicIPAddress() error {
-	klog.V(4).Infof("Allocate new IP for load balancer: %v", lb.name)
+	glog.V(4).Infof("Allocate new IP for load balancer: %v", lb.name)
 	// If a network belongs to a VPC, the IP address needs to be associated with
 	// the VPC instead of with the network.
 	network, count, err := lb.Network.GetNetworkByID(lb.networkID, cloudstack.WithProject(lb.projectID))

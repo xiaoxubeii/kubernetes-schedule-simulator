@@ -23,7 +23,6 @@ import (
 
 	"reflect"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
@@ -61,7 +60,7 @@ func TestCreate(t *testing.T) {
 
 		"nonresource rejected": {
 			spec: authorizationapi.SubjectAccessReviewSpec{
-				User:                  "bob",
+				User: "bob",
 				NonResourceAttributes: &authorizationapi.NonResourceAttributes{Verb: "get", Path: "/mypath"},
 			},
 			decision: authorizer.DecisionNoOpinion,
@@ -82,7 +81,7 @@ func TestCreate(t *testing.T) {
 
 		"nonresource allowed": {
 			spec: authorizationapi.SubjectAccessReviewSpec{
-				User:                  "bob",
+				User: "bob",
 				NonResourceAttributes: &authorizationapi.NonResourceAttributes{Verb: "get", Path: "/mypath"},
 			},
 			decision: authorizer.DecisionAllow,
@@ -196,7 +195,7 @@ func TestCreate(t *testing.T) {
 		}
 		storage := NewREST(auth)
 
-		result, err := storage.Create(genericapirequest.NewContext(), &authorizationapi.SubjectAccessReview{Spec: tc.spec}, rest.ValidateAllObjectFunc, &metav1.CreateOptions{})
+		result, err := storage.Create(genericapirequest.NewContext(), &authorizationapi.SubjectAccessReview{Spec: tc.spec}, rest.ValidateAllObjectFunc, false)
 		if err != nil {
 			if tc.expectedErr != "" {
 				if !strings.Contains(err.Error(), tc.expectedErr) {

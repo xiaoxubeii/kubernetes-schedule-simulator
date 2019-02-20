@@ -20,56 +20,51 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2018-07-01/storage"
-	"github.com/Azure/go-autorest/autorest/to"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 type accountWithLocation struct {
 	Name, StorageType, Location string
 }
 
-// getStorageAccounts gets name, type, location of all storage accounts in a resource group which matches matchingAccountType, matchingLocation
-func (az *Cloud) getStorageAccounts(matchingAccountType, matchingAccountKind, resourceGroup, matchingLocation string) ([]accountWithLocation, error) {
-	ctx, cancel := getContextWithCancel()
-	defer cancel()
-	result, err := az.StorageAccountClient.ListByResourceGroup(ctx, resourceGroup)
+// getStorageAccounts gets the storage accounts' name, type, location in a resource group
+func (az *Cloud) getStorageAccounts() ([]accountWithLocation, error) {
+	az.operationPollRateLimiter.Accept()
+	glog.V(10).Infof("StorageAccountClient.ListByResourceGroup(%v): start", az.ResourceGroup)
+	result, err := az.StorageAccountClient.ListByResourceGroup(az.ResourceGroup)
+	glog.V(10).Infof("StorageAccountClient.ListByResourceGroup(%v): end", az.ResourceGroup)
 	if err != nil {
 		return nil, err
 	}
 	if result.Value == nil {
-		return nil, fmt.Errorf("unexpected error when listing storage accounts from resource group %s", resourceGroup)
+		return nil, fmt.Errorf("no storage accounts from resource group %s", az.ResourceGroup)
 	}
 
 	accounts := []accountWithLocation{}
 	for _, acct := range *result.Value {
-		if acct.Name != nil && acct.Location != nil && acct.Sku != nil {
-			storageType := string((*acct.Sku).Name)
-			if matchingAccountType != "" && !strings.EqualFold(matchingAccountType, storageType) {
-				continue
+		if acct.Name != nil {
+			name := *acct.Name
+			loc := ""
+			if acct.Location != nil {
+				loc = *acct.Location
 			}
-
-			if matchingAccountKind != "" && !strings.EqualFold(matchingAccountKind, string(acct.Kind)) {
-				continue
+			storageType := ""
+			if acct.Sku != nil {
+				storageType = string((*acct.Sku).Name)
 			}
-
-			location := *acct.Location
-			if matchingLocation != "" && !strings.EqualFold(matchingLocation, location) {
-				continue
-			}
-			accounts = append(accounts, accountWithLocation{Name: *acct.Name, StorageType: storageType, Location: location})
+			accounts = append(accounts, accountWithLocation{Name: name, StorageType: storageType, Location: loc})
 		}
 	}
 
 	return accounts, nil
 }
 
-// GetStorageAccesskey gets the storage account access key
-func (az *Cloud) GetStorageAccesskey(account, resourceGroup string) (string, error) {
-	ctx, cancel := getContextWithCancel()
-	defer cancel()
-
-	result, err := az.StorageAccountClient.ListKeys(ctx, resourceGroup, account)
+// getStorageAccesskey gets the storage account access key
+func (az *Cloud) getStorageAccesskey(account string) (string, error) {
+	az.operationPollRateLimiter.Accept()
+	glog.V(10).Infof("StorageAccountClient.ListKeys(%q): start", account)
+	result, err := az.StorageAccountClient.ListKeys(az.ResourceGroup, account)
+	glog.V(10).Infof("StorageAccountClient.ListKeys(%q): end", account)
 	if err != nil {
 		return "", err
 	}
@@ -87,60 +82,4 @@ func (az *Cloud) GetStorageAccesskey(account, resourceGroup string) (string, err
 		}
 	}
 	return "", fmt.Errorf("no valid keys")
-}
-
-// ensureStorageAccount search storage account, create one storage account(with genAccountNamePrefix) if not found, return accountName, accountKey
-func (az *Cloud) ensureStorageAccount(accountName, accountType, accountKind, resourceGroup, location, genAccountNamePrefix string) (string, string, error) {
-	if len(accountName) == 0 {
-		// find a storage account that matches accountType
-		accounts, err := az.getStorageAccounts(accountType, accountKind, resourceGroup, location)
-		if err != nil {
-			return "", "", fmt.Errorf("could not list storage accounts for account type %s: %v", accountType, err)
-		}
-
-		if len(accounts) > 0 {
-			accountName = accounts[0].Name
-			klog.V(4).Infof("found a matching account %s type %s location %s", accounts[0].Name, accounts[0].StorageType, accounts[0].Location)
-		}
-
-		if len(accountName) == 0 {
-			// not found a matching account, now create a new account in current resource group
-			accountName = generateStorageAccountName(genAccountNamePrefix)
-			if location == "" {
-				location = az.Location
-			}
-			if accountType == "" {
-				accountType = defaultStorageAccountType
-			}
-
-			// use StorageV2 by default per https://docs.microsoft.com/en-us/azure/storage/common/storage-account-options
-			kind := defaultStorageAccountKind
-			if accountKind != "" {
-				kind = storage.Kind(accountKind)
-			}
-			klog.V(2).Infof("azure - no matching account found, begin to create a new account %s in resource group %s, location: %s, accountType: %s, accountKind: %s",
-				accountName, resourceGroup, location, accountType, kind)
-			cp := storage.AccountCreateParameters{
-				Sku:                               &storage.Sku{Name: storage.SkuName(accountType)},
-				Kind:                              kind,
-				AccountPropertiesCreateParameters: &storage.AccountPropertiesCreateParameters{EnableHTTPSTrafficOnly: to.BoolPtr(true)},
-				Tags:                              map[string]*string{"created-by": to.StringPtr("azure")},
-				Location:                          &location}
-
-			ctx, cancel := getContextWithCancel()
-			defer cancel()
-			_, err := az.StorageAccountClient.Create(ctx, resourceGroup, accountName, cp)
-			if err != nil {
-				return "", "", fmt.Errorf(fmt.Sprintf("Failed to create storage account %s, error: %s", accountName, err))
-			}
-		}
-	}
-
-	// find the access key with this account
-	accountKey, err := az.GetStorageAccesskey(accountName, resourceGroup)
-	if err != nil {
-		return "", "", fmt.Errorf("could not get storage key for storage account %s: %v", accountName, err)
-	}
-
-	return accountName, accountKey, nil
 }

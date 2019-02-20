@@ -21,13 +21,12 @@ import (
 	"errors"
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	metricsapi "k8s.io/metrics/pkg/apis/metrics"
-	metricsv1alpha1api "k8s.io/metrics/pkg/apis/metrics/v1alpha1"
+	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/kubernetes/pkg/apis/core/validation"
+	metricsapi "k8s.io/metrics/pkg/apis/metrics/v1alpha1"
 )
 
 const (
@@ -47,14 +46,14 @@ var (
 )
 
 type HeapsterMetricsClient struct {
-	SVCClient         corev1client.ServicesGetter
+	SVCClient         corev1.ServicesGetter
 	HeapsterNamespace string
 	HeapsterScheme    string
 	HeapsterService   string
 	HeapsterPort      string
 }
 
-func NewHeapsterMetricsClient(svcClient corev1client.ServicesGetter, namespace, scheme, service, port string) *HeapsterMetricsClient {
+func NewHeapsterMetricsClient(svcClient corev1.ServicesGetter, namespace, scheme, service, port string) *HeapsterMetricsClient {
 	return &HeapsterMetricsClient{
 		SVCClient:         svcClient,
 		HeapsterNamespace: namespace,
@@ -64,7 +63,11 @@ func NewHeapsterMetricsClient(svcClient corev1client.ServicesGetter, namespace, 
 	}
 }
 
-func podMetricsURL(namespace string, name string) (string, error) {
+func DefaultHeapsterMetricsClient(svcClient corev1.ServicesGetter) *HeapsterMetricsClient {
+	return NewHeapsterMetricsClient(svcClient, DefaultHeapsterNamespace, DefaultHeapsterScheme, DefaultHeapsterService, DefaultHeapsterPort)
+}
+
+func podMetricsUrl(namespace string, name string) (string, error) {
 	if namespace == metav1.NamespaceAll {
 		return fmt.Sprintf("%s/pods", metricsRoot), nil
 	}
@@ -74,7 +77,7 @@ func podMetricsURL(namespace string, name string) (string, error) {
 		return "", errors.New(message)
 	}
 	if len(name) > 0 {
-		errs = validation.NameIsDNSSubdomain(name, false)
+		errs = validation.ValidatePodName(name, false)
 		if len(errs) > 0 {
 			message := fmt.Sprintf("invalid pod name: %s - %v", name, errs)
 			return "", errors.New(message)
@@ -83,9 +86,9 @@ func podMetricsURL(namespace string, name string) (string, error) {
 	return fmt.Sprintf("%s/namespaces/%s/pods/%s", metricsRoot, namespace, name), nil
 }
 
-func nodeMetricsURL(name string) (string, error) {
+func nodeMetricsUrl(name string) (string, error) {
 	if len(name) > 0 {
-		errs := validation.NameIsDNSSubdomain(name, false)
+		errs := validation.ValidateNodeName(name, false)
 		if len(errs) > 0 {
 			message := fmt.Sprintf("invalid node name: %s - %v", name, errs)
 			return "", errors.New(message)
@@ -94,73 +97,67 @@ func nodeMetricsURL(name string) (string, error) {
 	return fmt.Sprintf("%s/nodes/%s", metricsRoot, name), nil
 }
 
-func (cli *HeapsterMetricsClient) GetNodeMetrics(nodeName string, selector string) (*metricsapi.NodeMetricsList, error) {
+func (cli *HeapsterMetricsClient) GetNodeMetrics(nodeName string, selector string) ([]metricsapi.NodeMetrics, error) {
 	params := map[string]string{"labelSelector": selector}
-	path, err := nodeMetricsURL(nodeName)
+	path, err := nodeMetricsUrl(nodeName)
 	if err != nil {
-		return nil, err
+		return []metricsapi.NodeMetrics{}, err
 	}
 	resultRaw, err := GetHeapsterMetrics(cli, path, params)
 	if err != nil {
-		return nil, err
+		return []metricsapi.NodeMetrics{}, err
 	}
-	versionedMetrics := metricsv1alpha1api.NodeMetricsList{}
+	metrics := make([]metricsapi.NodeMetrics, 0)
 	if len(nodeName) == 0 {
-		err = json.Unmarshal(resultRaw, &versionedMetrics)
+		metricsList := metricsapi.NodeMetricsList{}
+		err = json.Unmarshal(resultRaw, &metricsList)
 		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshall heapster response: %v", err)
+			return []metricsapi.NodeMetrics{}, fmt.Errorf("failed to unmarshall heapster response: %v", err)
 		}
+		metrics = append(metrics, metricsList.Items...)
 	} else {
-		var singleMetric metricsv1alpha1api.NodeMetrics
+		var singleMetric metricsapi.NodeMetrics
 		err = json.Unmarshal(resultRaw, &singleMetric)
 		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshall heapster response: %v", err)
+			return []metricsapi.NodeMetrics{}, fmt.Errorf("failed to unmarshall heapster response: %v", err)
 		}
-		versionedMetrics.Items = []metricsv1alpha1api.NodeMetrics{singleMetric}
-	}
-	metrics := &metricsapi.NodeMetricsList{}
-	err = metricsv1alpha1api.Convert_v1alpha1_NodeMetricsList_To_metrics_NodeMetricsList(&versionedMetrics, metrics, nil)
-	if err != nil {
-		return nil, err
+		metrics = append(metrics, singleMetric)
 	}
 	return metrics, nil
 }
 
-func (cli *HeapsterMetricsClient) GetPodMetrics(namespace string, podName string, allNamespaces bool, selector labels.Selector) (*metricsapi.PodMetricsList, error) {
+func (cli *HeapsterMetricsClient) GetPodMetrics(namespace string, podName string, allNamespaces bool, selector labels.Selector) ([]metricsapi.PodMetrics, error) {
 	if allNamespaces {
 		namespace = metav1.NamespaceAll
 	}
-	path, err := podMetricsURL(namespace, podName)
+	path, err := podMetricsUrl(namespace, podName)
 	if err != nil {
-		return nil, err
+		return []metricsapi.PodMetrics{}, err
 	}
 
 	params := map[string]string{"labelSelector": selector.String()}
-	versionedMetrics := metricsv1alpha1api.PodMetricsList{}
+	allMetrics := make([]metricsapi.PodMetrics, 0)
 
 	resultRaw, err := GetHeapsterMetrics(cli, path, params)
 	if err != nil {
-		return nil, err
+		return []metricsapi.PodMetrics{}, err
 	}
 	if len(podName) == 0 {
-		err = json.Unmarshal(resultRaw, &versionedMetrics)
+		metrics := metricsapi.PodMetricsList{}
+		err = json.Unmarshal(resultRaw, &metrics)
 		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshall heapster response: %v", err)
+			return []metricsapi.PodMetrics{}, fmt.Errorf("failed to unmarshall heapster response: %v", err)
 		}
+		allMetrics = append(allMetrics, metrics.Items...)
 	} else {
-		var singleMetric metricsv1alpha1api.PodMetrics
+		var singleMetric metricsapi.PodMetrics
 		err = json.Unmarshal(resultRaw, &singleMetric)
 		if err != nil {
-			return nil, fmt.Errorf("failed to unmarshall heapster response: %v", err)
+			return []metricsapi.PodMetrics{}, fmt.Errorf("failed to unmarshall heapster response: %v", err)
 		}
-		versionedMetrics.Items = []metricsv1alpha1api.PodMetrics{singleMetric}
+		allMetrics = append(allMetrics, singleMetric)
 	}
-	metrics := &metricsapi.PodMetricsList{}
-	err = metricsv1alpha1api.Convert_v1alpha1_PodMetricsList_To_metrics_PodMetricsList(&versionedMetrics, metrics, nil)
-	if err != nil {
-		return nil, err
-	}
-	return metrics, nil
+	return allMetrics, nil
 }
 
 func GetHeapsterMetrics(cli *HeapsterMetricsClient, path string, params map[string]string) ([]byte, error) {

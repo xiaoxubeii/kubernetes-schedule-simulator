@@ -20,12 +20,12 @@ import (
 	"reflect"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/diff"
-	"k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 )
 
 func TestWriteClientCAs(t *testing.T) {
@@ -33,7 +33,7 @@ func TestWriteClientCAs(t *testing.T) {
 		name               string
 		hook               ClientCARegistrationHook
 		preexistingObjs    []runtime.Object
-		expectedConfigMaps map[string]*corev1.ConfigMap
+		expectedConfigMaps map[string]*api.ConfigMap
 		expectUpdate       bool
 	}{
 		{
@@ -46,7 +46,7 @@ func TestWriteClientCAs(t *testing.T) {
 				RequestHeaderCA:                  []byte("bar"),
 				RequestHeaderAllowedNames:        []string{"first", "second"},
 			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{
+			expectedConfigMaps: map[string]*api.ConfigMap{
 				"extension-apiserver-authentication": {
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
@@ -66,7 +66,7 @@ func TestWriteClientCAs(t *testing.T) {
 				RequestHeaderCA:           []byte("bar"),
 				RequestHeaderAllowedNames: []string{"first", "second"},
 			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{
+			expectedConfigMaps: map[string]*api.ConfigMap{
 				"extension-apiserver-authentication": {
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
@@ -84,7 +84,7 @@ func TestWriteClientCAs(t *testing.T) {
 			hook: ClientCARegistrationHook{
 				ClientCA: []byte("foo"),
 			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{
+			expectedConfigMaps: map[string]*api.ConfigMap{
 				"extension-apiserver-authentication": {
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
@@ -98,7 +98,7 @@ func TestWriteClientCAs(t *testing.T) {
 			hook: ClientCARegistrationHook{
 				RequestHeaderCA: []byte("bar"),
 			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{
+			expectedConfigMaps: map[string]*api.ConfigMap{
 				"extension-apiserver-authentication": {
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
@@ -117,14 +117,14 @@ func TestWriteClientCAs(t *testing.T) {
 				ClientCA: []byte("foo"),
 			},
 			preexistingObjs: []runtime.Object{
-				&corev1.ConfigMap{
+				&api.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
 						"client-ca-file": "other",
 					},
 				},
 			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{
+			expectedConfigMaps: map[string]*api.ConfigMap{
 				"extension-apiserver-authentication": {
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
@@ -144,7 +144,7 @@ func TestWriteClientCAs(t *testing.T) {
 				RequestHeaderAllowedNames:        []string{},
 			},
 			preexistingObjs: []runtime.Object{
-				&corev1.ConfigMap{
+				&api.ConfigMap{
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
 						"requestheader-username-headers":     `null`,
@@ -155,7 +155,7 @@ func TestWriteClientCAs(t *testing.T) {
 					},
 				},
 			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{
+			expectedConfigMaps: map[string]*api.ConfigMap{
 				"extension-apiserver-authentication": {
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
@@ -175,9 +175,9 @@ func TestWriteClientCAs(t *testing.T) {
 				ClientCA: []byte("foo"),
 			},
 			preexistingObjs: []runtime.Object{
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: metav1.NamespaceSystem}},
+				&api.Namespace{ObjectMeta: metav1.ObjectMeta{Name: metav1.NamespaceSystem}},
 			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{
+			expectedConfigMaps: map[string]*api.ConfigMap{
 				"extension-apiserver-authentication": {
 					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
 					Data: map[string]string{
@@ -186,60 +186,36 @@ func TestWriteClientCAs(t *testing.T) {
 				},
 			},
 		},
-		{
-			name: "skip on no change",
-			hook: ClientCARegistrationHook{
-				RequestHeaderUsernameHeaders:     []string{},
-				RequestHeaderGroupHeaders:        []string{},
-				RequestHeaderExtraHeaderPrefixes: []string{},
-				RequestHeaderCA:                  []byte("bar"),
-				RequestHeaderAllowedNames:        []string{},
-			},
-			preexistingObjs: []runtime.Object{
-				&corev1.ConfigMap{
-					ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceSystem, Name: "extension-apiserver-authentication"},
-					Data: map[string]string{
-						"requestheader-username-headers":     `[]`,
-						"requestheader-group-headers":        `[]`,
-						"requestheader-extra-headers-prefix": `[]`,
-						"requestheader-client-ca-file":       "bar",
-						"requestheader-allowed-names":        `[]`,
-					},
-				},
-			},
-			expectedConfigMaps: map[string]*corev1.ConfigMap{},
-			expectUpdate:       false,
-		},
 	}
 
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client := fake.NewSimpleClientset(test.preexistingObjs...)
-			test.hook.tryToWriteClientCAs(client.Core())
+		client := fake.NewSimpleClientset(test.preexistingObjs...)
+		test.hook.tryToWriteClientCAs(client.Core())
 
-			actualConfigMaps, updated := getFinalConfigMaps(client)
-			if !reflect.DeepEqual(test.expectedConfigMaps, actualConfigMaps) {
-				t.Fatalf("%s: %v", test.name, diff.ObjectReflectDiff(test.expectedConfigMaps, actualConfigMaps))
-			}
-			if test.expectUpdate != updated {
-				t.Fatalf("%s: expected %v, got %v", test.name, test.expectUpdate, updated)
-			}
-		})
+		actualConfigMaps, updated := getFinalConfiMaps(client)
+		if !reflect.DeepEqual(test.expectedConfigMaps, actualConfigMaps) {
+			t.Errorf("%s: %v", test.name, diff.ObjectReflectDiff(test.expectedConfigMaps, actualConfigMaps))
+			continue
+		}
+		if test.expectUpdate != updated {
+			t.Errorf("%s: expected %v, got %v", test.name, test.expectUpdate, updated)
+			continue
+		}
 	}
 }
 
-func getFinalConfigMaps(client *fake.Clientset) (map[string]*corev1.ConfigMap, bool) {
-	ret := map[string]*corev1.ConfigMap{}
+func getFinalConfiMaps(client *fake.Clientset) (map[string]*api.ConfigMap, bool) {
+	ret := map[string]*api.ConfigMap{}
 	updated := false
 
 	for _, action := range client.Actions() {
 		if action.Matches("create", "configmaps") {
-			obj := action.(clienttesting.CreateAction).GetObject().(*corev1.ConfigMap)
+			obj := action.(clienttesting.CreateAction).GetObject().(*api.ConfigMap)
 			ret[obj.Name] = obj
 		}
 		if action.Matches("update", "configmaps") {
 			updated = true
-			obj := action.(clienttesting.UpdateAction).GetObject().(*corev1.ConfigMap)
+			obj := action.(clienttesting.UpdateAction).GetObject().(*api.ConfigMap)
 			ret[obj.Name] = obj
 		}
 	}

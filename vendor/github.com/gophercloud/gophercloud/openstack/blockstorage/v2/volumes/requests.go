@@ -83,21 +83,14 @@ type ListOptsBuilder interface {
 // ListOpts holds options for listing Volumes. It is passed to the volumes.List
 // function.
 type ListOpts struct {
-	// AllTenants will retrieve volumes of all tenants/projects.
+	// admin-only option. Set it to true to see all tenant volumes.
 	AllTenants bool `q:"all_tenants"`
-
-	// Metadata will filter results based on specified metadata.
+	// List only volumes that contain Metadata.
 	Metadata map[string]string `q:"metadata"`
-
-	// Name will filter by the specified volume name.
+	// List only volumes that have Name as the display name.
 	Name string `q:"name"`
-
-	// Status will filter by the specified status.
+	// List only volumes that have a status of Status.
 	Status string `q:"status"`
-
-	// TenantID will filter by a specific tenant/project ID.
-	// Setting AllTenants is required for this.
-	TenantID string `q:"project_id"`
 }
 
 // ToVolumeListQuery formats a ListOpts into a query string.

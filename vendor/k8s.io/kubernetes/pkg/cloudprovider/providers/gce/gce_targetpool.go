@@ -16,65 +16,58 @@ limitations under the License.
 
 package gce
 
-import (
-	compute "google.golang.org/api/compute/v1"
-
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/meta"
-)
+import compute "google.golang.org/api/compute/v1"
 
 func newTargetPoolMetricContext(request, region string) *metricContext {
 	return newGenericMetricContext("targetpool", request, region, unusedMetricLabel, computeV1Version)
 }
 
 // GetTargetPool returns the TargetPool by name.
-func (g *Cloud) GetTargetPool(name, region string) (*compute.TargetPool, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) GetTargetPool(name, region string) (*compute.TargetPool, error) {
 	mc := newTargetPoolMetricContext("get", region)
-	v, err := g.c.TargetPools().Get(ctx, meta.RegionalKey(name, region))
+	v, err := gce.service.TargetPools.Get(gce.projectID, region, name).Do()
 	return v, mc.Observe(err)
 }
 
 // CreateTargetPool creates the passed TargetPool
-func (g *Cloud) CreateTargetPool(tp *compute.TargetPool, region string) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) CreateTargetPool(tp *compute.TargetPool, region string) error {
 	mc := newTargetPoolMetricContext("create", region)
-	return mc.Observe(g.c.TargetPools().Insert(ctx, meta.RegionalKey(tp.Name, region), tp))
+	op, err := gce.service.TargetPools.Insert(gce.projectID, region, tp).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForRegionOp(op, region, mc)
 }
 
 // DeleteTargetPool deletes TargetPool by name.
-func (g *Cloud) DeleteTargetPool(name, region string) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) DeleteTargetPool(name, region string) error {
 	mc := newTargetPoolMetricContext("delete", region)
-	return mc.Observe(g.c.TargetPools().Delete(ctx, meta.RegionalKey(name, region)))
+	op, err := gce.service.TargetPools.Delete(gce.projectID, region, name).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+	return gce.waitForRegionOp(op, region, mc)
 }
 
 // AddInstancesToTargetPool adds instances by link to the TargetPool
-func (g *Cloud) AddInstancesToTargetPool(name, region string, instanceRefs []*compute.InstanceReference) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
-	req := &compute.TargetPoolsAddInstanceRequest{
-		Instances: instanceRefs,
-	}
+func (gce *GCECloud) AddInstancesToTargetPool(name, region string, instanceRefs []*compute.InstanceReference) error {
+	add := &compute.TargetPoolsAddInstanceRequest{Instances: instanceRefs}
 	mc := newTargetPoolMetricContext("add_instances", region)
-	return mc.Observe(g.c.TargetPools().AddInstance(ctx, meta.RegionalKey(name, region), req))
+	op, err := gce.service.TargetPools.AddInstance(gce.projectID, region, name, add).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+	return gce.waitForRegionOp(op, region, mc)
 }
 
-// RemoveInstancesFromTargetPool removes instances by link to the TargetPool
-func (g *Cloud) RemoveInstancesFromTargetPool(name, region string, instanceRefs []*compute.InstanceReference) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
-	req := &compute.TargetPoolsRemoveInstanceRequest{
-		Instances: instanceRefs,
-	}
+// RemoveInstancesToTargetPool removes instances by link to the TargetPool
+func (gce *GCECloud) RemoveInstancesFromTargetPool(name, region string, instanceRefs []*compute.InstanceReference) error {
+	remove := &compute.TargetPoolsRemoveInstanceRequest{Instances: instanceRefs}
 	mc := newTargetPoolMetricContext("remove_instances", region)
-	return mc.Observe(g.c.TargetPools().RemoveInstance(ctx, meta.RegionalKey(name, region), req))
+	op, err := gce.service.TargetPools.RemoveInstance(gce.projectID, region, name, remove).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+	return gce.waitForRegionOp(op, region, mc)
 }

@@ -18,9 +18,6 @@ package gce
 
 import (
 	compute "google.golang.org/api/compute/v1"
-
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/meta"
 )
 
 func newFirewallMetricContext(request string) *metricContext {
@@ -28,38 +25,40 @@ func newFirewallMetricContext(request string) *metricContext {
 }
 
 // GetFirewall returns the Firewall by name.
-func (g *Cloud) GetFirewall(name string) (*compute.Firewall, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) GetFirewall(name string) (*compute.Firewall, error) {
 	mc := newFirewallMetricContext("get")
-	v, err := g.c.Firewalls().Get(ctx, meta.GlobalKey(name))
+	v, err := gce.service.Firewalls.Get(gce.NetworkProjectID(), name).Do()
 	return v, mc.Observe(err)
 }
 
 // CreateFirewall creates the passed firewall
-func (g *Cloud) CreateFirewall(f *compute.Firewall) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) CreateFirewall(f *compute.Firewall) error {
 	mc := newFirewallMetricContext("create")
-	return mc.Observe(g.c.Firewalls().Insert(ctx, meta.GlobalKey(f.Name), f))
+	op, err := gce.service.Firewalls.Insert(gce.NetworkProjectID(), f).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForGlobalOpInProject(op, gce.NetworkProjectID(), mc)
 }
 
 // DeleteFirewall deletes the given firewall rule.
-func (g *Cloud) DeleteFirewall(name string) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) DeleteFirewall(name string) error {
 	mc := newFirewallMetricContext("delete")
-	return mc.Observe(g.c.Firewalls().Delete(ctx, meta.GlobalKey(name)))
+	op, err := gce.service.Firewalls.Delete(gce.NetworkProjectID(), name).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+	return gce.waitForGlobalOpInProject(op, gce.NetworkProjectID(), mc)
 }
 
 // UpdateFirewall applies the given firewall as an update to an existing service.
-func (g *Cloud) UpdateFirewall(f *compute.Firewall) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) UpdateFirewall(f *compute.Firewall) error {
 	mc := newFirewallMetricContext("update")
-	return mc.Observe(g.c.Firewalls().Update(ctx, meta.GlobalKey(f.Name), f))
+	op, err := gce.service.Firewalls.Update(gce.NetworkProjectID(), f.Name, f).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForGlobalOpInProject(op, gce.NetworkProjectID(), mc)
 }

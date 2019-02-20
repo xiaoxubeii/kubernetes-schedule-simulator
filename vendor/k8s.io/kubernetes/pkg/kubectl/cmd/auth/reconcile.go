@@ -18,41 +18,31 @@ package auth
 
 import (
 	"errors"
-	"fmt"
+	"io"
 
+	"github.com/golang/glog"
 	"github.com/spf13/cobra"
-	"k8s.io/klog"
 
-	rbacv1 "k8s.io/api/rbac/v1"
-	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
-	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
-	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/cli-runtime/pkg/genericclioptions/printers"
-	"k8s.io/cli-runtime/pkg/genericclioptions/resource"
-	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	rbacv1client "k8s.io/client-go/kubernetes/typed/rbac/v1"
+	"k8s.io/kubernetes/pkg/apis/rbac"
+	internalcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
+	internalrbacclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/rbac/internalversion"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/kubectl/scheme"
-	"k8s.io/kubernetes/pkg/kubectl/util/templates"
+	"k8s.io/kubernetes/pkg/kubectl/resource"
 	"k8s.io/kubernetes/pkg/registry/rbac/reconciliation"
 )
 
 // ReconcileOptions is the start of the data required to perform the operation.  As new fields are added, add them here instead of
 // referencing the cmd.Flags()
 type ReconcileOptions struct {
-	PrintFlags             *genericclioptions.PrintFlags
-	FilenameOptions        *resource.FilenameOptions
-	DryRun                 bool
-	RemoveExtraPermissions bool
-	RemoveExtraSubjects    bool
-
 	Visitor         resource.Visitor
-	RBACClient      rbacv1client.RbacV1Interface
-	NamespaceClient corev1client.CoreV1Interface
+	RBACClient      internalrbacclient.RbacInterface
+	NamespaceClient internalcoreclient.NamespaceInterface
 
-	PrintObject printers.ResourcePrinterFunc
+	Print func(*resource.Info) error
 
-	genericclioptions.IOStreams
+	Out io.Writer
+	Err io.Writer
 }
 
 var (
@@ -66,59 +56,48 @@ var (
 		kubectl auth reconcile -f my-rbac-rules.yaml`)
 )
 
-// NewReconcileOptions returns a new ReconcileOptions instance
-func NewReconcileOptions(ioStreams genericclioptions.IOStreams) *ReconcileOptions {
-	return &ReconcileOptions{
-		FilenameOptions: &resource.FilenameOptions{},
-		PrintFlags:      genericclioptions.NewPrintFlags("reconciled").WithTypeSetter(scheme.Scheme),
-		IOStreams:       ioStreams,
+func NewCmdReconcile(f cmdutil.Factory, out, err io.Writer) *cobra.Command {
+	fileOptions := &resource.FilenameOptions{}
+	o := &ReconcileOptions{
+		Out: out,
+		Err: err,
 	}
-}
-
-// NewCmdReconcile holds the options for 'auth reconcile' sub command
-func NewCmdReconcile(f cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
-	o := NewReconcileOptions(streams)
 
 	cmd := &cobra.Command{
-		Use:                   "reconcile -f FILENAME",
-		DisableFlagsInUseLine: true,
-		Short:                 "Reconciles rules for RBAC Role, RoleBinding, ClusterRole, and ClusterRole binding objects",
-		Long:                  reconcileLong,
-		Example:               reconcileExample,
+		Use:     "reconcile -f FILENAME",
+		Short:   "Reconciles rules for RBAC Role, RoleBinding, ClusterRole, and ClusterRole binding objects",
+		Long:    reconcileLong,
+		Example: reconcileExample,
 		Run: func(cmd *cobra.Command, args []string) {
-			cmdutil.CheckErr(o.Complete(cmd, f, args))
+			cmdutil.CheckErr(o.Complete(cmd, f, args, fileOptions))
 			cmdutil.CheckErr(o.Validate())
 			cmdutil.CheckErr(o.RunReconcile())
 		},
 	}
 
-	o.PrintFlags.AddFlags(cmd)
-
-	cmdutil.AddFilenameOptionFlags(cmd, o.FilenameOptions, "identifying the resource to reconcile.")
-	cmd.Flags().BoolVar(&o.DryRun, "dry-run", o.DryRun, "If true, display results but do not submit changes")
-	cmd.Flags().BoolVar(&o.RemoveExtraPermissions, "remove-extra-permissions", o.RemoveExtraPermissions, "If true, removes extra permissions added to roles")
-	cmd.Flags().BoolVar(&o.RemoveExtraSubjects, "remove-extra-subjects", o.RemoveExtraSubjects, "If true, removes extra subjects added to rolebindings")
+	cmdutil.AddPrinterFlags(cmd)
+	usage := "identifying the resource to reconcile."
+	cmdutil.AddFilenameOptionFlags(cmd, fileOptions, usage)
 	cmd.MarkFlagRequired("filename")
 
 	return cmd
 }
 
-// Complete completes all the required options
-func (o *ReconcileOptions) Complete(cmd *cobra.Command, f cmdutil.Factory, args []string) error {
+func (o *ReconcileOptions) Complete(cmd *cobra.Command, f cmdutil.Factory, args []string, options *resource.FilenameOptions) error {
 	if len(args) > 0 {
 		return errors.New("no arguments are allowed")
 	}
 
-	namespace, enforceNamespace, err := f.ToRawKubeConfigLoader().Namespace()
+	namespace, enforceNamespace, err := f.DefaultNamespace()
 	if err != nil {
 		return err
 	}
 
 	r := f.NewBuilder().
-		WithScheme(scheme.Scheme, scheme.Scheme.PrioritizedVersionsAllGroups()...).
+		Internal().
 		ContinueOnError().
 		NamespaceParam(namespace).DefaultNamespace().
-		FilenameParam(enforceNamespace, o.FilenameOptions).
+		FilenameParam(enforceNamespace, options).
 		Flatten().
 		Do()
 
@@ -127,32 +106,28 @@ func (o *ReconcileOptions) Complete(cmd *cobra.Command, f cmdutil.Factory, args 
 	}
 	o.Visitor = r
 
-	clientConfig, err := f.ToRESTConfig()
+	client, err := f.ClientSet()
 	if err != nil {
 		return err
 	}
-	o.RBACClient, err = rbacv1client.NewForConfig(clientConfig)
-	if err != nil {
-		return err
-	}
-	o.NamespaceClient, err = corev1client.NewForConfig(clientConfig)
-	if err != nil {
-		return err
+	o.RBACClient = client.Rbac()
+	o.NamespaceClient = client.Core().Namespaces()
+
+	mapper, _ := f.Object()
+	dryRun := false
+	output := cmdutil.GetFlagString(cmd, "output")
+	shortOutput := output == "name"
+	o.Print = func(info *resource.Info) error {
+		if len(output) > 0 && !shortOutput {
+			return f.PrintResourceInfoForCommand(cmd, info, o.Out)
+		}
+		f.PrintSuccess(mapper, shortOutput, o.Out, info.Mapping.Resource, info.Name, dryRun, "reconciled")
+		return nil
 	}
 
-	if o.DryRun {
-		o.PrintFlags.Complete("%s (dry run)")
-	}
-	printer, err := o.PrintFlags.ToPrinter()
-	if err != nil {
-		return err
-	}
-
-	o.PrintObject = printer.PrintObj
 	return nil
 }
 
-// Validate makes sure provided values for ReconcileOptions are valid
 func (o *ReconcileOptions) Validate() error {
 	if o.Visitor == nil {
 		return errors.New("ReconcileOptions.Visitor must be set")
@@ -163,33 +138,36 @@ func (o *ReconcileOptions) Validate() error {
 	if o.NamespaceClient == nil {
 		return errors.New("ReconcileOptions.NamespaceClient must be set")
 	}
-	if o.PrintObject == nil {
+	if o.Print == nil {
 		return errors.New("ReconcileOptions.Print must be set")
 	}
 	if o.Out == nil {
 		return errors.New("ReconcileOptions.Out must be set")
 	}
-	if o.ErrOut == nil {
+	if o.Err == nil {
 		return errors.New("ReconcileOptions.Err must be set")
 	}
 	return nil
 }
 
-// RunReconcile performs the execution
 func (o *ReconcileOptions) RunReconcile() error {
 	return o.Visitor.Visit(func(info *resource.Info, err error) error {
 		if err != nil {
 			return err
 		}
 
+		// shallowInfoCopy this is used to later twiddle the Object for printing
+		// we really need more straightforward printing options
+		shallowInfoCopy := *info
+
 		switch t := info.Object.(type) {
-		case *rbacv1.Role:
+		case *rbac.Role:
 			reconcileOptions := reconciliation.ReconcileRoleOptions{
-				Confirm:                !o.DryRun,
-				RemoveExtraPermissions: o.RemoveExtraPermissions,
-				Role:                   reconciliation.RoleRuleOwner{Role: t},
+				Confirm:                true,
+				RemoveExtraPermissions: false,
+				Role: reconciliation.RoleRuleOwner{Role: t},
 				Client: reconciliation.RoleModifier{
-					NamespaceClient: o.NamespaceClient.Namespaces(),
+					NamespaceClient: o.NamespaceClient,
 					Client:          o.RBACClient,
 				},
 			}
@@ -197,13 +175,14 @@ func (o *ReconcileOptions) RunReconcile() error {
 			if err != nil {
 				return err
 			}
-			o.PrintObject(result.Role.GetObject(), o.Out)
+			shallowInfoCopy.Object = result.Role.GetObject()
+			o.Print(&shallowInfoCopy)
 
-		case *rbacv1.ClusterRole:
+		case *rbac.ClusterRole:
 			reconcileOptions := reconciliation.ReconcileRoleOptions{
-				Confirm:                !o.DryRun,
-				RemoveExtraPermissions: o.RemoveExtraPermissions,
-				Role:                   reconciliation.ClusterRoleRuleOwner{ClusterRole: t},
+				Confirm:                true,
+				RemoveExtraPermissions: false,
+				Role: reconciliation.ClusterRoleRuleOwner{ClusterRole: t},
 				Client: reconciliation.ClusterRoleModifier{
 					Client: o.RBACClient.ClusterRoles(),
 				},
@@ -212,28 +191,30 @@ func (o *ReconcileOptions) RunReconcile() error {
 			if err != nil {
 				return err
 			}
-			o.PrintObject(result.Role.GetObject(), o.Out)
+			shallowInfoCopy.Object = result.Role.GetObject()
+			o.Print(&shallowInfoCopy)
 
-		case *rbacv1.RoleBinding:
+		case *rbac.RoleBinding:
 			reconcileOptions := reconciliation.ReconcileRoleBindingOptions{
-				Confirm:             !o.DryRun,
-				RemoveExtraSubjects: o.RemoveExtraSubjects,
+				Confirm:             true,
+				RemoveExtraSubjects: false,
 				RoleBinding:         reconciliation.RoleBindingAdapter{RoleBinding: t},
 				Client: reconciliation.RoleBindingClientAdapter{
 					Client:          o.RBACClient,
-					NamespaceClient: o.NamespaceClient.Namespaces(),
+					NamespaceClient: o.NamespaceClient,
 				},
 			}
 			result, err := reconcileOptions.Run()
 			if err != nil {
 				return err
 			}
-			o.PrintObject(result.RoleBinding.GetObject(), o.Out)
+			shallowInfoCopy.Object = result.RoleBinding.GetObject()
+			o.Print(&shallowInfoCopy)
 
-		case *rbacv1.ClusterRoleBinding:
+		case *rbac.ClusterRoleBinding:
 			reconcileOptions := reconciliation.ReconcileRoleBindingOptions{
-				Confirm:             !o.DryRun,
-				RemoveExtraSubjects: o.RemoveExtraSubjects,
+				Confirm:             true,
+				RemoveExtraSubjects: false,
 				RoleBinding:         reconciliation.ClusterRoleBindingAdapter{ClusterRoleBinding: t},
 				Client: reconciliation.ClusterRoleBindingClientAdapter{
 					Client: o.RBACClient.ClusterRoleBindings(),
@@ -243,20 +224,11 @@ func (o *ReconcileOptions) RunReconcile() error {
 			if err != nil {
 				return err
 			}
-			o.PrintObject(result.RoleBinding.GetObject(), o.Out)
-
-		case *rbacv1beta1.Role,
-			*rbacv1beta1.RoleBinding,
-			*rbacv1beta1.ClusterRole,
-			*rbacv1beta1.ClusterRoleBinding,
-			*rbacv1alpha1.Role,
-			*rbacv1alpha1.RoleBinding,
-			*rbacv1alpha1.ClusterRole,
-			*rbacv1alpha1.ClusterRoleBinding:
-			return fmt.Errorf("only rbac.authorization.k8s.io/v1 is supported: not %T", t)
+			shallowInfoCopy.Object = result.RoleBinding.GetObject()
+			o.Print(&shallowInfoCopy)
 
 		default:
-			klog.V(1).Infof("skipping %#v", info.Object.GetObjectKind())
+			glog.V(1).Infof("skipping %#v", info.Object.GetObjectKind())
 			// skip ignored resources
 		}
 

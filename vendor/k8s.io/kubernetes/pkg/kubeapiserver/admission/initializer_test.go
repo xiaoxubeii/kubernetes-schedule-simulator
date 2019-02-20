@@ -33,13 +33,13 @@ type WantsCloudConfigAdmissionPlugin struct {
 	cloudConfig []byte
 }
 
-func (p *WantsCloudConfigAdmissionPlugin) SetCloudConfig(cloudConfig []byte) {
-	p.cloudConfig = cloudConfig
+func (self *WantsCloudConfigAdmissionPlugin) SetCloudConfig(cloudConfig []byte) {
+	self.cloudConfig = cloudConfig
 }
 
 func TestCloudConfigAdmissionPlugin(t *testing.T) {
 	cloudConfig := []byte("cloud-configuration")
-	initializer := NewPluginInitializer(cloudConfig, nil, nil)
+	initializer := NewPluginInitializer(nil, nil, cloudConfig, nil, nil)
 	wantsCloudConfigAdmission := &WantsCloudConfigAdmissionPlugin{}
 	initializer.Initialize(wantsCloudConfigAdmission)
 

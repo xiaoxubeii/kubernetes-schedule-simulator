@@ -17,7 +17,6 @@ limitations under the License.
 package ssh
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -27,10 +26,10 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/ssh"
-
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog"
+
+	"github.com/golang/glog"
+	"golang.org/x/crypto/ssh"
 )
 
 type testSSHServer struct {
@@ -94,11 +93,11 @@ func runTestSSHServer(user, password string) (*testSSHServer, error) {
 
 		conn, err := listener.Accept()
 		if err != nil {
-			klog.Errorf("Failed to accept: %v", err)
+			glog.Errorf("Failed to accept: %v", err)
 		}
 		_, chans, reqs, err := ssh.NewServerConn(conn, config)
 		if err != nil {
-			klog.Errorf("Failed handshake: %v", err)
+			glog.Errorf("Failed handshake: %v", err)
 		}
 		go ssh.DiscardRequests(reqs)
 		for newChannel := range chans {
@@ -108,11 +107,11 @@ func runTestSSHServer(user, password string) (*testSSHServer, error) {
 			}
 			channel, requests, err := newChannel.Accept()
 			if err != nil {
-				klog.Errorf("Failed to accept channel: %v", err)
+				glog.Errorf("Failed to accept channel: %v", err)
 			}
 
 			for req := range requests {
-				klog.Infof("Got request: %v", req)
+				glog.Infof("Got request: %v", req)
 			}
 
 			channel.Close()
@@ -134,7 +133,7 @@ func TestSSHTunnel(t *testing.T) {
 	}
 
 	privateData := EncodePrivateKey(private)
-	tunnel, err := newSSHTunnelFromBytes("foo", privateData, server.Host)
+	tunnel, err := NewSSHTunnelFromBytes("foo", privateData, server.Host)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 		t.FailNow()
@@ -146,7 +145,7 @@ func TestSSHTunnel(t *testing.T) {
 		t.FailNow()
 	}
 
-	_, err = tunnel.Dial(context.Background(), "tcp", "127.0.0.1:8080")
+	_, err = tunnel.Dial("tcp", "127.0.0.1:8080")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -177,13 +176,13 @@ func (*fakeTunnel) Close() error {
 	return nil
 }
 
-func (*fakeTunnel) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+func (*fakeTunnel) Dial(network, address string) (net.Conn, error) {
 	return nil, nil
 }
 
 type fakeTunnelCreator struct{}
 
-func (*fakeTunnelCreator) newSSHTunnel(string, string, string) (tunnel, error) {
+func (*fakeTunnelCreator) NewSSHTunnel(string, string, string) (tunnel, error) {
 	return &fakeTunnel{}, nil
 }
 
@@ -354,12 +353,4 @@ func TestTimeoutDialer(t *testing.T) {
 	}
 
 	listener.Close()
-}
-
-func newSSHTunnelFromBytes(user string, privateKey []byte, host string) (*sshTunnel, error) {
-	signer, err := MakePrivateKeySignerFromBytes(privateKey)
-	if err != nil {
-		return nil, err
-	}
-	return makeSSHTunnel(user, signer, host)
 }

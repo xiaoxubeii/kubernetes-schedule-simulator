@@ -19,7 +19,7 @@ package log
 import (
 	"fmt"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 const logFmt = "kubelet config controller: %s"
@@ -33,7 +33,7 @@ func Errorf(format string, args ...interface{}) {
 	} else {
 		s = format
 	}
-	klog.ErrorDepth(1, fmt.Sprintf(logFmt, s))
+	glog.ErrorDepth(1, fmt.Sprintf(logFmt, s))
 }
 
 // Infof shim that inserts "kubelet config controller" at the beginning of the log message,
@@ -45,5 +45,5 @@ func Infof(format string, args ...interface{}) {
 	} else {
 		s = format
 	}
-	klog.InfoDepth(1, fmt.Sprintf(logFmt, s))
+	glog.InfoDepth(1, fmt.Sprintf(logFmt, s))
 }

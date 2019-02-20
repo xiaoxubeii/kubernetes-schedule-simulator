@@ -18,15 +18,10 @@ package flexvolume
 
 import (
 	"testing"
-
-	"k8s.io/kubernetes/test/utils/harness"
 )
 
-func TestDetach(tt *testing.T) {
-	t := harness.For(tt)
-	defer t.Close()
-
-	plugin, _ := testPlugin(t)
+func TestDetach(t *testing.T) {
+	plugin, _ := testPlugin()
 	plugin.runner = fakeRunner(
 		assertDriverCall(t, notSupportedOutput(), detachCmd,
 			"sdx", "localhost"),
@@ -36,11 +31,8 @@ func TestDetach(tt *testing.T) {
 	d.Detach("sdx", "localhost")
 }
 
-func TestUnmountDevice(tt *testing.T) {
-	t := harness.For(tt)
-	defer t.Close()
-
-	plugin, rootDir := testPlugin(t)
+func TestUnmountDevice(t *testing.T) {
+	plugin, rootDir := testPlugin()
 	plugin.runner = fakeRunner(
 		assertDriverCall(t, notSupportedOutput(), unmountDeviceCmd,
 			rootDir+"/mount-dir"),

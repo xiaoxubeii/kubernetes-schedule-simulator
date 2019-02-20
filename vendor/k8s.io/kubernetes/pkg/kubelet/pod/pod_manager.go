@@ -19,12 +19,11 @@ package pod
 import (
 	"sync"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/kubelet/checkpoint"
-	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	"k8s.io/kubernetes/pkg/kubelet/configmap"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/secret"
@@ -122,18 +121,18 @@ type basicManager struct {
 	// basicManager is keeping secretManager and configMapManager up-to-date.
 	secretManager     secret.Manager
 	configMapManager  configmap.Manager
-	checkpointManager checkpointmanager.CheckpointManager
+	checkpointManager checkpoint.Manager
 
 	// A mirror pod client to create/delete mirror pods.
 	MirrorClient
 }
 
 // NewBasicPodManager returns a functional Manager.
-func NewBasicPodManager(client MirrorClient, secretManager secret.Manager, configMapManager configmap.Manager, cpm checkpointmanager.CheckpointManager) Manager {
+func NewBasicPodManager(client MirrorClient, secretManager secret.Manager, configMapManager configmap.Manager) Manager {
 	pm := &basicManager{}
 	pm.secretManager = secretManager
 	pm.configMapManager = configMapManager
-	pm.checkpointManager = cpm
+	pm.checkpointManager = checkpoint.GetInstance()
 	pm.MirrorClient = client
 	pm.SetPods(nil)
 	return pm
@@ -162,8 +161,8 @@ func (pm *basicManager) UpdatePod(pod *v1.Pod) {
 	defer pm.lock.Unlock()
 	pm.updatePodsInternal(pod)
 	if pm.checkpointManager != nil {
-		if err := checkpoint.WritePod(pm.checkpointManager, pod); err != nil {
-			klog.Errorf("Error writing checkpoint for pod: %v", pod.GetName())
+		if err := pm.checkpointManager.WritePod(pod); err != nil {
+			glog.Errorf("Error writing checkpoint for pod: %v", pod.GetName())
 		}
 	}
 }
@@ -225,8 +224,8 @@ func (pm *basicManager) DeletePod(pod *v1.Pod) {
 		delete(pm.podByFullName, podFullName)
 	}
 	if pm.checkpointManager != nil {
-		if err := checkpoint.DeletePod(pm.checkpointManager, pod); err != nil {
-			klog.Errorf("Error deleting checkpoint for pod: %v", pod.GetName())
+		if err := pm.checkpointManager.DeletePod(pod); err != nil {
+			glog.Errorf("Error deleting checkpoint for pod: %v", pod.GetName())
 		}
 	}
 }

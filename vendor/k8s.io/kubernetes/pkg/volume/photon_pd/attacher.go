@@ -17,7 +17,6 @@ limitations under the License.
 package photon_pd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path"
@@ -25,13 +24,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/photon"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
 	volumeutil "k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
 )
 
 type photonPersistentDiskAttacher struct {
@@ -40,17 +40,12 @@ type photonPersistentDiskAttacher struct {
 }
 
 var _ volume.Attacher = &photonPersistentDiskAttacher{}
-
-var _ volume.DeviceMounter = &photonPersistentDiskAttacher{}
-
 var _ volume.AttachableVolumePlugin = &photonPersistentDiskPlugin{}
-
-var _ volume.DeviceMountableVolumePlugin = &photonPersistentDiskPlugin{}
 
 func (plugin *photonPersistentDiskPlugin) NewAttacher() (volume.Attacher, error) {
 	photonCloud, err := getCloudProvider(plugin.host.GetCloudProvider())
 	if err != nil {
-		klog.Errorf("Photon Controller attacher: NewAttacher failed to get cloud provider")
+		glog.Errorf("Photon Controller attacher: NewAttacher failed to get cloud provider")
 		return nil, err
 	}
 
@@ -58,10 +53,6 @@ func (plugin *photonPersistentDiskPlugin) NewAttacher() (volume.Attacher, error)
 		host:        plugin.host,
 		photonDisks: photonCloud,
 	}, nil
-}
-
-func (plugin *photonPersistentDiskPlugin) NewDeviceMounter() (volume.DeviceMounter, error) {
-	return plugin.NewAttacher()
 }
 
 // Attaches the volume specified by the given spec to the given host.
@@ -74,22 +65,22 @@ func (attacher *photonPersistentDiskAttacher) Attach(spec *volume.Spec, nodeName
 	hostName := string(nodeName)
 	volumeSource, _, err := getVolumeSource(spec)
 	if err != nil {
-		klog.Errorf("Photon Controller attacher: Attach failed to get volume source")
+		glog.Errorf("Photon Controller attacher: Attach failed to get volume source")
 		return "", err
 	}
-	attached, err := attacher.photonDisks.DiskIsAttached(context.TODO(), volumeSource.PdID, nodeName)
+	attached, err := attacher.photonDisks.DiskIsAttached(volumeSource.PdID, nodeName)
 
 	if err != nil {
-		klog.Warningf("Photon Controller: couldn't check if disk is Attached for host %s, will try attach disk: %+v", hostName, err)
+		glog.Warningf("Photon Controller: couldn't check if disk is Attached for host %s, will try attach disk: %+v", hostName, err)
 		attached = false
 	}
 
 	if !attached {
-		klog.V(4).Infof("Photon Controller: Attach disk called for host %s", hostName)
+		glog.V(4).Infof("Photon Controller: Attach disk called for host %s", hostName)
 
-		err = attacher.photonDisks.AttachDisk(context.TODO(), volumeSource.PdID, nodeName)
+		err = attacher.photonDisks.AttachDisk(volumeSource.PdID, nodeName)
 		if err != nil {
-			klog.Errorf("Error attaching volume %q to node %q: %+v", volumeSource.PdID, nodeName, err)
+			glog.Errorf("Error attaching volume %q to node %q: %+v", volumeSource.PdID, nodeName, err)
 			return "", err
 		}
 	}
@@ -105,7 +96,7 @@ func (attacher *photonPersistentDiskAttacher) VolumesAreAttached(specs []*volume
 	for _, spec := range specs {
 		volumeSource, _, err := getVolumeSource(spec)
 		if err != nil {
-			klog.Errorf("Error getting volume (%q) source : %v", spec.Name(), err)
+			glog.Errorf("Error getting volume (%q) source : %v", spec.Name(), err)
 			continue
 		}
 
@@ -113,9 +104,9 @@ func (attacher *photonPersistentDiskAttacher) VolumesAreAttached(specs []*volume
 		volumesAttachedCheck[spec] = true
 		volumeSpecMap[volumeSource.PdID] = spec
 	}
-	attachedResult, err := attacher.photonDisks.DisksAreAttached(context.TODO(), pdIDList, nodeName)
+	attachedResult, err := attacher.photonDisks.DisksAreAttached(pdIDList, nodeName)
 	if err != nil {
-		klog.Errorf(
+		glog.Errorf(
 			"Error checking if volumes (%v) are attached to current node (%q). err=%v",
 			pdIDList, nodeName, err)
 		return volumesAttachedCheck, err
@@ -125,7 +116,7 @@ func (attacher *photonPersistentDiskAttacher) VolumesAreAttached(specs []*volume
 		if !attached {
 			spec := volumeSpecMap[pdID]
 			volumesAttachedCheck[spec] = false
-			klog.V(2).Infof("VolumesAreAttached: check volume %q (specName: %q) is no longer attached", pdID, spec.Name())
+			glog.V(2).Infof("VolumesAreAttached: check volume %q (specName: %q) is no longer attached", pdID, spec.Name())
 		}
 	}
 	return volumesAttachedCheck, nil
@@ -134,7 +125,7 @@ func (attacher *photonPersistentDiskAttacher) VolumesAreAttached(specs []*volume
 func (attacher *photonPersistentDiskAttacher) WaitForAttach(spec *volume.Spec, devicePath string, _ *v1.Pod, timeout time.Duration) (string, error) {
 	volumeSource, _, err := getVolumeSource(spec)
 	if err != nil {
-		klog.Errorf("Photon Controller attacher: WaitForAttach failed to get volume source")
+		glog.Errorf("Photon Controller attacher: WaitForAttach failed to get volume source")
 		return "", err
 	}
 
@@ -154,14 +145,14 @@ func (attacher *photonPersistentDiskAttacher) WaitForAttach(spec *volume.Spec, d
 	for {
 		select {
 		case <-ticker.C:
-			klog.V(4).Infof("Checking PD %s is attached", volumeSource.PdID)
+			glog.V(4).Infof("Checking PD %s is attached", volumeSource.PdID)
 			checkPath, err := verifyDevicePath(devicePath)
 			if err != nil {
 				// Log error, if any, and continue checking periodically. See issue #11321
-				klog.Warningf("Photon Controller attacher: WaitForAttach with devicePath %s Checking PD %s Error verify path", devicePath, volumeSource.PdID)
+				glog.Warningf("Photon Controller attacher: WaitForAttach with devicePath %s Checking PD %s Error verify path", devicePath, volumeSource.PdID)
 			} else if checkPath != "" {
 				// A device path has successfully been created for the VMDK
-				klog.V(4).Infof("Successfully found attached PD %s.", volumeSource.PdID)
+				glog.V(4).Infof("Successfully found attached PD %s.", volumeSource.PdID)
 				// map path with spec.Name()
 				volName := spec.Name()
 				realPath, _ := filepath.EvalSymlinks(devicePath)
@@ -180,7 +171,7 @@ func (attacher *photonPersistentDiskAttacher) WaitForAttach(spec *volume.Spec, d
 func (attacher *photonPersistentDiskAttacher) GetDeviceMountPath(spec *volume.Spec) (string, error) {
 	volumeSource, _, err := getVolumeSource(spec)
 	if err != nil {
-		klog.Errorf("Photon Controller attacher: GetDeviceMountPath failed to get volume source")
+		glog.Errorf("Photon Controller attacher: GetDeviceMountPath failed to get volume source")
 		return "", err
 	}
 
@@ -191,7 +182,7 @@ func (attacher *photonPersistentDiskAttacher) GetDeviceMountPath(spec *volume.Sp
 // by deviceMountPath; returns a list of paths.
 func (plugin *photonPersistentDiskPlugin) GetDeviceMountRefs(deviceMountPath string) ([]string, error) {
 	mounter := plugin.host.GetMounter(plugin.GetPluginName())
-	return mounter.GetMountRefs(deviceMountPath)
+	return mount.GetMountRefs(mounter, deviceMountPath)
 }
 
 // MountDevice mounts device to global mount point.
@@ -201,7 +192,7 @@ func (attacher *photonPersistentDiskAttacher) MountDevice(spec *volume.Spec, dev
 	if err != nil {
 		if os.IsNotExist(err) {
 			if err := os.MkdirAll(deviceMountPath, 0750); err != nil {
-				klog.Errorf("Failed to create directory at %#v. err: %s", deviceMountPath, err)
+				glog.Errorf("Failed to create directory at %#v. err: %s", deviceMountPath, err)
 				return err
 			}
 			notMnt = true
@@ -212,21 +203,21 @@ func (attacher *photonPersistentDiskAttacher) MountDevice(spec *volume.Spec, dev
 
 	volumeSource, _, err := getVolumeSource(spec)
 	if err != nil {
-		klog.Errorf("Photon Controller attacher: MountDevice failed to get volume source. err: %s", err)
+		glog.Errorf("Photon Controller attacher: MountDevice failed to get volume source. err: %s", err)
 		return err
 	}
 
 	options := []string{}
 
 	if notMnt {
-		diskMounter := volumeutil.NewSafeFormatAndMountFromHost(photonPersistentDiskPluginName, attacher.host)
-		mountOptions := volumeutil.MountOptionFromSpec(spec)
+		diskMounter := volumehelper.NewSafeFormatAndMountFromHost(photonPersistentDiskPluginName, attacher.host)
+		mountOptions := volume.MountOptionFromSpec(spec)
 		err = diskMounter.FormatAndMount(devicePath, deviceMountPath, volumeSource.FSType, mountOptions)
 		if err != nil {
 			os.Remove(deviceMountPath)
 			return err
 		}
-		klog.V(4).Infof("formatting spec %v devicePath %v deviceMountPath %v fs %v with options %+v", spec.Name(), devicePath, deviceMountPath, volumeSource.FSType, options)
+		glog.V(4).Infof("formatting spec %v devicePath %v deviceMountPath %v fs %v with options %+v", spec.Name(), devicePath, deviceMountPath, volumeSource.FSType, options)
 	}
 	return nil
 }
@@ -238,12 +229,10 @@ type photonPersistentDiskDetacher struct {
 
 var _ volume.Detacher = &photonPersistentDiskDetacher{}
 
-var _ volume.DeviceUnmounter = &photonPersistentDiskDetacher{}
-
 func (plugin *photonPersistentDiskPlugin) NewDetacher() (volume.Detacher, error) {
 	photonCloud, err := getCloudProvider(plugin.host.GetCloudProvider())
 	if err != nil {
-		klog.Errorf("Photon Controller attacher: NewDetacher failed to get cloud provider. err: %s", err)
+		glog.Errorf("Photon Controller attacher: NewDetacher failed to get cloud provider. err: %s", err)
 		return nil, err
 	}
 
@@ -253,31 +242,27 @@ func (plugin *photonPersistentDiskPlugin) NewDetacher() (volume.Detacher, error)
 	}, nil
 }
 
-func (plugin *photonPersistentDiskPlugin) NewDeviceUnmounter() (volume.DeviceUnmounter, error) {
-	return plugin.NewDetacher()
-}
-
 // Detach the given device from the given host.
 func (detacher *photonPersistentDiskDetacher) Detach(volumeName string, nodeName types.NodeName) error {
 
 	hostName := string(nodeName)
 	pdID := volumeName
-	attached, err := detacher.photonDisks.DiskIsAttached(context.TODO(), pdID, nodeName)
+	attached, err := detacher.photonDisks.DiskIsAttached(pdID, nodeName)
 	if err != nil {
 		// Log error and continue with detach
-		klog.Errorf(
+		glog.Errorf(
 			"Error checking if persistent disk (%q) is already attached to current node (%q). Will continue and try detach anyway. err=%v",
 			pdID, hostName, err)
 	}
 
 	if err == nil && !attached {
 		// Volume is already detached from node.
-		klog.V(4).Infof("detach operation was successful. persistent disk %q is already detached from node %q.", pdID, hostName)
+		glog.V(4).Infof("detach operation was successful. persistent disk %q is already detached from node %q.", pdID, hostName)
 		return nil
 	}
 
-	if err := detacher.photonDisks.DetachDisk(context.TODO(), pdID, nodeName); err != nil {
-		klog.Errorf("Error detaching volume %q: %v", pdID, err)
+	if err := detacher.photonDisks.DetachDisk(pdID, nodeName); err != nil {
+		glog.Errorf("Error detaching volume %q: %v", pdID, err)
 		return err
 	}
 	return nil
@@ -292,7 +277,7 @@ func (detacher *photonPersistentDiskDetacher) WaitForDetach(devicePath string, t
 	for {
 		select {
 		case <-ticker.C:
-			klog.V(4).Infof("Checking device %q is detached.", devicePath)
+			glog.V(4).Infof("Checking device %q is detached.", devicePath)
 			if pathExists, err := volumeutil.PathExists(devicePath); err != nil {
 				return fmt.Errorf("Error checking if device path exists: %v", err)
 			} else if !pathExists {

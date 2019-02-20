@@ -17,35 +17,29 @@ limitations under the License.
 package openstack
 
 import (
-	"context"
 	"errors"
-	"net"
 
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/routers"
 	neutronports "github.com/gophercloud/gophercloud/openstack/networking/v2/ports"
 
+	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/types"
-	cloudprovider "k8s.io/cloud-provider"
-	"k8s.io/klog"
+	"k8s.io/kubernetes/pkg/cloudprovider"
 )
 
-var errNoRouterID = errors.New("router-id not set in cloud provider config")
+var ErrNoRouterId = errors.New("router-id not set in cloud provider config")
 
-var _ cloudprovider.Routes = (*Routes)(nil)
-
-// Routes implements the cloudprovider.Routes for OpenStack clouds
 type Routes struct {
 	compute *gophercloud.ServiceClient
 	network *gophercloud.ServiceClient
 	opts    RouterOpts
 }
 
-// NewRoutes creates a new instance of Routes
 func NewRoutes(compute *gophercloud.ServiceClient, network *gophercloud.ServiceClient, opts RouterOpts) (cloudprovider.Routes, error) {
-	if opts.RouterID == "" {
-		return nil, errNoRouterID
+	if opts.RouterId == "" {
+		return nil, ErrNoRouterId
 	}
 
 	return &Routes{
@@ -55,12 +49,11 @@ func NewRoutes(compute *gophercloud.ServiceClient, network *gophercloud.ServiceC
 	}, nil
 }
 
-// ListRoutes lists all managed routes that belong to the specified clusterName
-func (r *Routes) ListRoutes(ctx context.Context, clusterName string) ([]*cloudprovider.Route, error) {
-	klog.V(4).Infof("ListRoutes(%v)", clusterName)
+func (r *Routes) ListRoutes(clusterName string) ([]*cloudprovider.Route, error) {
+	glog.V(4).Infof("ListRoutes(%v)", clusterName)
 
 	nodeNamesByAddr := make(map[string]types.NodeName)
-	err := foreachServer(r.compute, servers.ListOpts{}, func(srv *servers.Server) (bool, error) {
+	err := foreachServer(r.compute, servers.ListOpts{Status: "ACTIVE"}, func(srv *servers.Server) (bool, error) {
 		addrs, err := nodeAddresses(srv)
 		if err != nil {
 			return false, err
@@ -77,21 +70,22 @@ func (r *Routes) ListRoutes(ctx context.Context, clusterName string) ([]*cloudpr
 		return nil, err
 	}
 
-	router, err := routers.Get(r.network, r.opts.RouterID).Extract()
+	router, err := routers.Get(r.network, r.opts.RouterId).Extract()
 	if err != nil {
 		return nil, err
 	}
 
 	var routes []*cloudprovider.Route
 	for _, item := range router.Routes {
-		nodeName, foundNode := nodeNamesByAddr[item.NextHop]
-		if !foundNode {
-			nodeName = types.NodeName(item.NextHop)
+		nodeName, ok := nodeNamesByAddr[item.NextHop]
+		if !ok {
+			// Not one of our routes?
+			glog.V(4).Infof("Skipping route with unknown nexthop %v", item.NextHop)
+			continue
 		}
 		route := cloudprovider.Route{
 			Name:            item.DestinationCIDR,
-			TargetNode:      nodeName, //contains the nexthop address if node was not found
-			Blackhole:       !foundNode,
+			TargetNode:      nodeName,
 			DestinationCIDR: item.DestinationCIDR,
 		}
 		routes = append(routes, &route)
@@ -111,12 +105,12 @@ func updateRoutes(network *gophercloud.ServiceClient, router *routers.Router, ne
 	}
 
 	unwinder := func() {
-		klog.V(4).Info("Reverting routes change to router ", router.ID)
+		glog.V(4).Info("Reverting routes change to router ", router.ID)
 		_, err := routers.Update(network, router.ID, routers.UpdateOpts{
 			Routes: origRoutes,
 		}).Extract()
 		if err != nil {
-			klog.Warning("Unable to reset routes during error unwind: ", err)
+			glog.Warning("Unable to reset routes during error unwind: ", err)
 		}
 	}
 
@@ -134,35 +128,31 @@ func updateAllowedAddressPairs(network *gophercloud.ServiceClient, port *neutron
 	}
 
 	unwinder := func() {
-		klog.V(4).Info("Reverting allowed-address-pairs change to port ", port.ID)
+		glog.V(4).Info("Reverting allowed-address-pairs change to port ", port.ID)
 		_, err := neutronports.Update(network, port.ID, neutronports.UpdateOpts{
 			AllowedAddressPairs: &origPairs,
 		}).Extract()
 		if err != nil {
-			klog.Warning("Unable to reset allowed-address-pairs during error unwind: ", err)
+			glog.Warning("Unable to reset allowed-address-pairs during error unwind: ", err)
 		}
 	}
 
 	return unwinder, nil
 }
 
-// CreateRoute creates the described managed route
-func (r *Routes) CreateRoute(ctx context.Context, clusterName string, nameHint string, route *cloudprovider.Route) error {
-	klog.V(4).Infof("CreateRoute(%v, %v, %v)", clusterName, nameHint, route)
+func (r *Routes) CreateRoute(clusterName string, nameHint string, route *cloudprovider.Route) error {
+	glog.V(4).Infof("CreateRoute(%v, %v, %v)", clusterName, nameHint, route)
 
-	onFailure := newCaller()
+	onFailure := NewCaller()
 
-	ip, _, _ := net.ParseCIDR(route.DestinationCIDR)
-	isCIDRv6 := ip.To4() == nil
-	addr, err := getAddressByName(r.compute, route.TargetNode, isCIDRv6)
-
+	addr, err := getAddressByName(r.compute, route.TargetNode)
 	if err != nil {
 		return err
 	}
 
-	klog.V(4).Infof("Using nexthop %v for node %v", addr, route.TargetNode)
+	glog.V(4).Infof("Using nexthop %v for node %v", addr, route.TargetNode)
 
-	router, err := routers.Get(r.network, r.opts.RouterID).Extract()
+	router, err := routers.Get(r.network, r.opts.RouterId).Extract()
 	if err != nil {
 		return err
 	}
@@ -171,7 +161,7 @@ func (r *Routes) CreateRoute(ctx context.Context, clusterName string, nameHint s
 
 	for _, item := range routes {
 		if item.DestinationCIDR == route.DestinationCIDR && item.NextHop == addr {
-			klog.V(4).Infof("Skipping existing route: %v", route)
+			glog.V(4).Infof("Skipping existing route: %v", route)
 			return nil
 		}
 	}
@@ -185,7 +175,7 @@ func (r *Routes) CreateRoute(ctx context.Context, clusterName string, nameHint s
 	if err != nil {
 		return err
 	}
-	defer onFailure.call(unwind)
+	defer onFailure.Call(unwind)
 
 	// get the port of addr on target node.
 	portID, err := getPortIDByIP(r.compute, route.TargetNode, addr)
@@ -200,7 +190,7 @@ func (r *Routes) CreateRoute(ctx context.Context, clusterName string, nameHint s
 	found := false
 	for _, item := range port.AllowedAddressPairs {
 		if item.IPAddress == route.DestinationCIDR {
-			klog.V(4).Info("Found existing allowed-address-pair: ", item)
+			glog.V(4).Info("Found existing allowed-address-pair: ", item)
 			found = true
 			break
 		}
@@ -214,35 +204,25 @@ func (r *Routes) CreateRoute(ctx context.Context, clusterName string, nameHint s
 		if err != nil {
 			return err
 		}
-		defer onFailure.call(unwind)
+		defer onFailure.Call(unwind)
 	}
 
-	klog.V(4).Infof("Route created: %v", route)
-	onFailure.disarm()
+	glog.V(4).Infof("Route created: %v", route)
+	onFailure.Disarm()
 	return nil
 }
 
-// DeleteRoute deletes the specified managed route
-func (r *Routes) DeleteRoute(ctx context.Context, clusterName string, route *cloudprovider.Route) error {
-	klog.V(4).Infof("DeleteRoute(%v, %v)", clusterName, route)
+func (r *Routes) DeleteRoute(clusterName string, route *cloudprovider.Route) error {
+	glog.V(4).Infof("DeleteRoute(%v, %v)", clusterName, route)
 
-	onFailure := newCaller()
+	onFailure := NewCaller()
 
-	ip, _, _ := net.ParseCIDR(route.DestinationCIDR)
-	isCIDRv6 := ip.To4() == nil
-
-	var addr string
-
-	// Blackhole routes are orphaned and have no counterpart in OpenStack
-	if !route.Blackhole {
-		var err error
-		addr, err = getAddressByName(r.compute, route.TargetNode, isCIDRv6)
-		if err != nil {
-			return err
-		}
+	addr, err := getAddressByName(r.compute, route.TargetNode)
+	if err != nil {
+		return err
 	}
 
-	router, err := routers.Get(r.network, r.opts.RouterID).Extract()
+	router, err := routers.Get(r.network, r.opts.RouterId).Extract()
 	if err != nil {
 		return err
 	}
@@ -250,14 +230,14 @@ func (r *Routes) DeleteRoute(ctx context.Context, clusterName string, route *clo
 	routes := router.Routes
 	index := -1
 	for i, item := range routes {
-		if item.DestinationCIDR == route.DestinationCIDR && (item.NextHop == addr || route.Blackhole && item.NextHop == string(route.TargetNode)) {
+		if item.DestinationCIDR == route.DestinationCIDR && item.NextHop == addr {
 			index = i
 			break
 		}
 	}
 
 	if index == -1 {
-		klog.V(4).Infof("Skipping non-existent route: %v", route)
+		glog.V(4).Infof("Skipping non-existent route: %v", route)
 		return nil
 	}
 
@@ -266,11 +246,10 @@ func (r *Routes) DeleteRoute(ctx context.Context, clusterName string, route *clo
 	routes = routes[:len(routes)-1]
 
 	unwind, err := updateRoutes(r.network, router, routes)
-	// If this was a blackhole route we are done, there are no ports to update
-	if err != nil || route.Blackhole {
+	if err != nil {
 		return err
 	}
-	defer onFailure.call(unwind)
+	defer onFailure.Call(unwind)
 
 	// get the port of addr on target node.
 	portID, err := getPortIDByIP(r.compute, route.TargetNode, addr)
@@ -282,9 +261,9 @@ func (r *Routes) DeleteRoute(ctx context.Context, clusterName string, route *clo
 		return err
 	}
 
-	addrPairs := port.AllowedAddressPairs
+	addr_pairs := port.AllowedAddressPairs
 	index = -1
-	for i, item := range addrPairs {
+	for i, item := range addr_pairs {
 		if item.IPAddress == route.DestinationCIDR {
 			index = i
 			break
@@ -293,18 +272,18 @@ func (r *Routes) DeleteRoute(ctx context.Context, clusterName string, route *clo
 
 	if index != -1 {
 		// Delete element `index`
-		addrPairs[index] = addrPairs[len(addrPairs)-1]
-		addrPairs = addrPairs[:len(addrPairs)-1]
+		addr_pairs[index] = addr_pairs[len(addr_pairs)-1]
+		addr_pairs = addr_pairs[:len(addr_pairs)-1]
 
-		unwind, err := updateAllowedAddressPairs(r.network, port, addrPairs)
+		unwind, err := updateAllowedAddressPairs(r.network, port, addr_pairs)
 		if err != nil {
 			return err
 		}
-		defer onFailure.call(unwind)
+		defer onFailure.Call(unwind)
 	}
 
-	klog.V(4).Infof("Route deleted: %v", route)
-	onFailure.disarm()
+	glog.V(4).Infof("Route deleted: %v", route)
+	onFailure.Disarm()
 	return nil
 }
 

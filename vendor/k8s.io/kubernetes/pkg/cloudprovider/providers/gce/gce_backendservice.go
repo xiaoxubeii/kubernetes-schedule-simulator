@@ -17,13 +17,10 @@ limitations under the License.
 package gce
 
 import (
-	computealpha "google.golang.org/api/compute/v0.alpha"
-	computebeta "google.golang.org/api/compute/v0.beta"
-	compute "google.golang.org/api/compute/v1"
+	"net/http"
 
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/filter"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/meta"
+	computealpha "google.golang.org/api/compute/v0.alpha"
+	compute "google.golang.org/api/compute/v1"
 )
 
 func newBackendServiceMetricContext(request, region string) *metricContext {
@@ -35,201 +32,152 @@ func newBackendServiceMetricContextWithVersion(request, region, version string) 
 }
 
 // GetGlobalBackendService retrieves a backend by name.
-func (g *Cloud) GetGlobalBackendService(name string) (*compute.BackendService, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) GetGlobalBackendService(name string) (*compute.BackendService, error) {
 	mc := newBackendServiceMetricContext("get", "")
-	v, err := g.c.BackendServices().Get(ctx, meta.GlobalKey(name))
-	return v, mc.Observe(err)
-}
-
-// GetBetaGlobalBackendService retrieves beta backend by name.
-func (g *Cloud) GetBetaGlobalBackendService(name string) (*computebeta.BackendService, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
-	mc := newBackendServiceMetricContextWithVersion("get", "", computeBetaVersion)
-	v, err := g.c.BetaBackendServices().Get(ctx, meta.GlobalKey(name))
+	v, err := gce.service.BackendServices.Get(gce.projectID, name).Do()
 	return v, mc.Observe(err)
 }
 
 // GetAlphaGlobalBackendService retrieves alpha backend by name.
-func (g *Cloud) GetAlphaGlobalBackendService(name string) (*computealpha.BackendService, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) GetAlphaGlobalBackendService(name string) (*computealpha.BackendService, error) {
 	mc := newBackendServiceMetricContextWithVersion("get", "", computeAlphaVersion)
-	v, err := g.c.AlphaBackendServices().Get(ctx, meta.GlobalKey(name))
+	v, err := gce.serviceAlpha.BackendServices.Get(gce.projectID, name).Do()
 	return v, mc.Observe(err)
 }
 
-// UpdateGlobalBackendService applies the given BackendService as an update to
-// an existing service.
-func (g *Cloud) UpdateGlobalBackendService(bg *compute.BackendService) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+// UpdateGlobalBackendService applies the given BackendService as an update to an existing service.
+func (gce *GCECloud) UpdateGlobalBackendService(bg *compute.BackendService) error {
 	mc := newBackendServiceMetricContext("update", "")
-	return mc.Observe(g.c.BackendServices().Update(ctx, meta.GlobalKey(bg.Name), bg))
+	op, err := gce.service.BackendServices.Update(gce.projectID, bg.Name, bg).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForGlobalOp(op, mc)
 }
 
-// UpdateBetaGlobalBackendService applies the given beta BackendService as an
-// update to an existing service.
-func (g *Cloud) UpdateBetaGlobalBackendService(bg *computebeta.BackendService) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
-	mc := newBackendServiceMetricContextWithVersion("update", "", computeBetaVersion)
-	return mc.Observe(g.c.BetaBackendServices().Update(ctx, meta.GlobalKey(bg.Name), bg))
-}
-
-// UpdateAlphaGlobalBackendService applies the given alpha BackendService as an
-// update to an existing service.
-func (g *Cloud) UpdateAlphaGlobalBackendService(bg *computealpha.BackendService) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+// UpdateAlphaGlobalBackendService applies the given alpha BackendService as an update to an existing service.
+func (gce *GCECloud) UpdateAlphaGlobalBackendService(bg *computealpha.BackendService) error {
 	mc := newBackendServiceMetricContextWithVersion("update", "", computeAlphaVersion)
-	return mc.Observe(g.c.AlphaBackendServices().Update(ctx, meta.GlobalKey(bg.Name), bg))
+	op, err := gce.serviceAlpha.BackendServices.Update(gce.projectID, bg.Name, bg).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForGlobalOp(op, mc)
 }
 
 // DeleteGlobalBackendService deletes the given BackendService by name.
-func (g *Cloud) DeleteGlobalBackendService(name string) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) DeleteGlobalBackendService(name string) error {
 	mc := newBackendServiceMetricContext("delete", "")
-	return mc.Observe(g.c.BackendServices().Delete(ctx, meta.GlobalKey(name)))
+	op, err := gce.service.BackendServices.Delete(gce.projectID, name).Do()
+	if err != nil {
+		if isHTTPErrorCode(err, http.StatusNotFound) {
+			return nil
+		}
+		return mc.Observe(err)
+	}
+
+	return gce.waitForGlobalOp(op, mc)
 }
 
 // CreateGlobalBackendService creates the given BackendService.
-func (g *Cloud) CreateGlobalBackendService(bg *compute.BackendService) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) CreateGlobalBackendService(bg *compute.BackendService) error {
 	mc := newBackendServiceMetricContext("create", "")
-	return mc.Observe(g.c.BackendServices().Insert(ctx, meta.GlobalKey(bg.Name), bg))
-}
+	op, err := gce.service.BackendServices.Insert(gce.projectID, bg).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
 
-// CreateBetaGlobalBackendService creates the given beta BackendService.
-func (g *Cloud) CreateBetaGlobalBackendService(bg *computebeta.BackendService) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
-	mc := newBackendServiceMetricContextWithVersion("create", "", computeBetaVersion)
-	return mc.Observe(g.c.BetaBackendServices().Insert(ctx, meta.GlobalKey(bg.Name), bg))
+	return gce.waitForGlobalOp(op, mc)
 }
 
 // CreateAlphaGlobalBackendService creates the given alpha BackendService.
-func (g *Cloud) CreateAlphaGlobalBackendService(bg *computealpha.BackendService) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) CreateAlphaGlobalBackendService(bg *computealpha.BackendService) error {
 	mc := newBackendServiceMetricContextWithVersion("create", "", computeAlphaVersion)
-	return mc.Observe(g.c.AlphaBackendServices().Insert(ctx, meta.GlobalKey(bg.Name), bg))
+	op, err := gce.serviceAlpha.BackendServices.Insert(gce.projectID, bg).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForGlobalOp(op, mc)
 }
 
 // ListGlobalBackendServices lists all backend services in the project.
-func (g *Cloud) ListGlobalBackendServices() ([]*compute.BackendService, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) ListGlobalBackendServices() (*compute.BackendServiceList, error) {
 	mc := newBackendServiceMetricContext("list", "")
-	v, err := g.c.BackendServices().List(ctx, filter.None)
+	// TODO: use PageToken to list all not just the first 500
+	v, err := gce.service.BackendServices.List(gce.projectID).Do()
 	return v, mc.Observe(err)
 }
 
-// GetGlobalBackendServiceHealth returns the health of the BackendService
-// identified by the given name, in the given instanceGroup. The
-// instanceGroupLink is the fully qualified self link of an instance group.
-func (g *Cloud) GetGlobalBackendServiceHealth(name string, instanceGroupLink string) (*compute.BackendServiceGroupHealth, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+// GetGlobalBackendServiceHealth returns the health of the BackendService identified by the given
+// name, in the given instanceGroup. The instanceGroupLink is the fully
+// qualified self link of an instance group.
+func (gce *GCECloud) GetGlobalBackendServiceHealth(name string, instanceGroupLink string) (*compute.BackendServiceGroupHealth, error) {
 	mc := newBackendServiceMetricContext("get_health", "")
 	groupRef := &compute.ResourceGroupReference{Group: instanceGroupLink}
-	v, err := g.c.BackendServices().GetHealth(ctx, meta.GlobalKey(name), groupRef)
+	v, err := gce.service.BackendServices.GetHealth(gce.projectID, name, groupRef).Do()
 	return v, mc.Observe(err)
 }
 
 // GetRegionBackendService retrieves a backend by name.
-func (g *Cloud) GetRegionBackendService(name, region string) (*compute.BackendService, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) GetRegionBackendService(name, region string) (*compute.BackendService, error) {
 	mc := newBackendServiceMetricContext("get", region)
-	v, err := g.c.RegionBackendServices().Get(ctx, meta.RegionalKey(name, region))
+	v, err := gce.service.RegionBackendServices.Get(gce.projectID, region, name).Do()
 	return v, mc.Observe(err)
 }
 
-// UpdateRegionBackendService applies the given BackendService as an update to
-// an existing service.
-func (g *Cloud) UpdateRegionBackendService(bg *compute.BackendService, region string) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+// UpdateRegionBackendService applies the given BackendService as an update to an existing service.
+func (gce *GCECloud) UpdateRegionBackendService(bg *compute.BackendService, region string) error {
 	mc := newBackendServiceMetricContext("update", region)
-	return mc.Observe(g.c.RegionBackendServices().Update(ctx, meta.RegionalKey(bg.Name, region), bg))
+	op, err := gce.service.RegionBackendServices.Update(gce.projectID, region, bg.Name, bg).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForRegionOp(op, region, mc)
 }
 
 // DeleteRegionBackendService deletes the given BackendService by name.
-func (g *Cloud) DeleteRegionBackendService(name, region string) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) DeleteRegionBackendService(name, region string) error {
 	mc := newBackendServiceMetricContext("delete", region)
-	return mc.Observe(g.c.RegionBackendServices().Delete(ctx, meta.RegionalKey(name, region)))
+	op, err := gce.service.RegionBackendServices.Delete(gce.projectID, region, name).Do()
+	if err != nil {
+		if isHTTPErrorCode(err, http.StatusNotFound) {
+			return nil
+		}
+		return mc.Observe(err)
+	}
+
+	return gce.waitForRegionOp(op, region, mc)
 }
 
 // CreateRegionBackendService creates the given BackendService.
-func (g *Cloud) CreateRegionBackendService(bg *compute.BackendService, region string) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) CreateRegionBackendService(bg *compute.BackendService, region string) error {
 	mc := newBackendServiceMetricContext("create", region)
-	return mc.Observe(g.c.RegionBackendServices().Insert(ctx, meta.RegionalKey(bg.Name, region), bg))
+	op, err := gce.service.RegionBackendServices.Insert(gce.projectID, region, bg).Do()
+	if err != nil {
+		return mc.Observe(err)
+	}
+
+	return gce.waitForRegionOp(op, region, mc)
 }
 
 // ListRegionBackendServices lists all backend services in the project.
-func (g *Cloud) ListRegionBackendServices(region string) ([]*compute.BackendService, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) ListRegionBackendServices(region string) (*compute.BackendServiceList, error) {
 	mc := newBackendServiceMetricContext("list", region)
-	v, err := g.c.RegionBackendServices().List(ctx, region, filter.None)
+	// TODO: use PageToken to list all not just the first 500
+	v, err := gce.service.RegionBackendServices.List(gce.projectID, region).Do()
 	return v, mc.Observe(err)
 }
 
-// GetRegionalBackendServiceHealth returns the health of the BackendService
-// identified by the given name, in the given instanceGroup. The
-// instanceGroupLink is the fully qualified self link of an instance group.
-func (g *Cloud) GetRegionalBackendServiceHealth(name, region string, instanceGroupLink string) (*compute.BackendServiceGroupHealth, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+// GetRegionalBackendServiceHealth returns the health of the BackendService identified by the given
+// name, in the given instanceGroup. The instanceGroupLink is the fully
+// qualified self link of an instance group.
+func (gce *GCECloud) GetRegionalBackendServiceHealth(name, region string, instanceGroupLink string) (*compute.BackendServiceGroupHealth, error) {
 	mc := newBackendServiceMetricContext("get_health", region)
-	ref := &compute.ResourceGroupReference{Group: instanceGroupLink}
-	v, err := g.c.RegionBackendServices().GetHealth(ctx, meta.RegionalKey(name, region), ref)
+	groupRef := &compute.ResourceGroupReference{Group: instanceGroupLink}
+	v, err := gce.service.RegionBackendServices.GetHealth(gce.projectID, region, name, groupRef).Do()
 	return v, mc.Observe(err)
-}
-
-// SetSecurityPolicyForBetaGlobalBackendService sets the given
-// SecurityPolicyReference for the BackendService identified by the given name.
-func (g *Cloud) SetSecurityPolicyForBetaGlobalBackendService(backendServiceName string, securityPolicyReference *computebeta.SecurityPolicyReference) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
-	mc := newBackendServiceMetricContextWithVersion("set_security_policy", "", computeBetaVersion)
-	return mc.Observe(g.c.BetaBackendServices().SetSecurityPolicy(ctx, meta.GlobalKey(backendServiceName), securityPolicyReference))
-}
-
-// SetSecurityPolicyForAlphaGlobalBackendService sets the given
-// SecurityPolicyReference for the BackendService identified by the given name.
-func (g *Cloud) SetSecurityPolicyForAlphaGlobalBackendService(backendServiceName string, securityPolicyReference *computealpha.SecurityPolicyReference) error {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
-	mc := newBackendServiceMetricContextWithVersion("set_security_policy", "", computeAlphaVersion)
-	return mc.Observe(g.c.AlphaBackendServices().SetSecurityPolicy(ctx, meta.GlobalKey(backendServiceName), securityPolicyReference))
 }

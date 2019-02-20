@@ -17,14 +17,13 @@ limitations under the License.
 package config
 
 import (
+	"bytes"
 	"io/ioutil"
 	"os"
 	"testing"
 
-	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
 type viewClusterTest struct {
@@ -43,19 +42,19 @@ func TestViewCluster(t *testing.T) {
 			"my-cluster": {Server: "https://192.168.0.1:3434"},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
-			"minikube":   {AuthInfo: "minikube", Cluster: "minikube"},
-			"my-cluster": {AuthInfo: "mu-cluster", Cluster: "my-cluster"},
+			"minikube":  {AuthInfo: "minikube", Cluster: "minikube"},
+			"my-cluser": {AuthInfo: "mu-cluster", Cluster: "my-cluster"},
 		},
 		CurrentContext: "minikube",
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			"minikube":   {Token: "minikube-token"},
-			"mu-cluster": {Token: "minikube-token"},
+			"minikube":  {Token: "minikube-token"},
+			"my-cluser": {Token: "minikube-token"},
 		},
 	}
-
 	test := viewClusterTest{
 		description: "Testing for kubectl config view",
 		config:      conf,
+		flags:       []string{},
 		expected: `apiVersion: v1
 clusters:
 - cluster:
@@ -72,7 +71,7 @@ contexts:
 - context:
     cluster: my-cluster
     user: mu-cluster
-  name: my-cluster
+  name: my-cluser
 current-context: minikube
 kind: Config
 preferences: {}
@@ -80,13 +79,10 @@ users:
 - name: minikube
   user:
     token: minikube-token
-- name: mu-cluster
+- name: my-cluser
   user:
-    token: minikube-token` + "\n",
-	}
-
+    token: minikube-token` + "\n"}
 	test.run(t)
-
 }
 
 func TestViewClusterMinify(t *testing.T) {
@@ -98,27 +94,20 @@ func TestViewClusterMinify(t *testing.T) {
 			"my-cluster": {Server: "https://192.168.0.1:3434"},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
-			"minikube":   {AuthInfo: "minikube", Cluster: "minikube"},
-			"my-cluster": {AuthInfo: "mu-cluster", Cluster: "my-cluster"},
+			"minikube":  {AuthInfo: "minikube", Cluster: "minikube"},
+			"my-cluser": {AuthInfo: "mu-cluster", Cluster: "my-cluster"},
 		},
 		CurrentContext: "minikube",
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			"minikube":   {Token: "minikube-token"},
-			"mu-cluster": {Token: "minikube-token"},
+			"minikube":  {Token: "minikube-token"},
+			"my-cluser": {Token: "minikube-token"},
 		},
 	}
-
-	testCases := []struct {
-		description string
-		config      clientcmdapi.Config
-		flags       []string
-		expected    string
-	}{
-		{
-			description: "Testing for kubectl config view --minify=true",
-			config:      conf,
-			flags:       []string{"--minify=true"},
-			expected: `apiVersion: v1
+	test := viewClusterTest{
+		description: "Testing for kubectl config view --minify=true",
+		config:      conf,
+		flags:       []string{"--minify=true"},
+		expected: `apiVersion: v1
 clusters:
 - cluster:
     server: https://192.168.99.100:8443
@@ -134,41 +123,8 @@ preferences: {}
 users:
 - name: minikube
   user:
-    token: minikube-token` + "\n",
-		},
-		{
-			description: "Testing for kubectl config view --minify=true --context=my-cluster",
-			config:      conf,
-			flags:       []string{"--minify=true", "--context=my-cluster"},
-			expected: `apiVersion: v1
-clusters:
-- cluster:
-    server: https://192.168.0.1:3434
-  name: my-cluster
-contexts:
-- context:
-    cluster: my-cluster
-    user: mu-cluster
-  name: my-cluster
-current-context: my-cluster
-kind: Config
-preferences: {}
-users:
-- name: mu-cluster
-  user:
-    token: minikube-token` + "\n",
-		},
-	}
-
-	for _, test := range testCases {
-		cmdTest := viewClusterTest{
-			description: test.description,
-			config:      test.config,
-			flags:       test.flags,
-			expected:    test.expected,
-		}
-		cmdTest.run(t)
-	}
+    token: minikube-token` + "\n"}
+	test.run(t)
 }
 
 func (test viewClusterTest) run(t *testing.T) {
@@ -184,12 +140,10 @@ func (test viewClusterTest) run(t *testing.T) {
 	pathOptions := clientcmd.NewDefaultPathOptions()
 	pathOptions.GlobalFile = fakeKubeFile.Name()
 	pathOptions.EnvVar = ""
-	streams, _, buf, _ := genericclioptions.NewTestIOStreams()
-	cmd := NewCmdConfigView(cmdutil.NewFactory(genericclioptions.NewTestConfigFlags()), streams, pathOptions)
-	// "context" is a global flag, inherited from base kubectl command in the real world
-	cmd.Flags().String("context", "", "The name of the kubeconfig context to use")
+	buf := bytes.NewBuffer([]byte{})
+	errBuf := bytes.NewBuffer([]byte{})
+	cmd := NewCmdConfigView(buf, errBuf, pathOptions)
 	cmd.Flags().Parse(test.flags)
-
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error executing command: %v,kubectl config view flags: %v", err, test.flags)
 	}

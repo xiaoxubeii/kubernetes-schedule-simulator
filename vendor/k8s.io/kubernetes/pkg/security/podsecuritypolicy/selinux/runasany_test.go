@@ -17,8 +17,8 @@ limitations under the License.
 package selinux
 
 import (
-	corev1 "k8s.io/api/core/v1"
-	policy "k8s.io/api/policy/v1beta1"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/extensions"
 	"testing"
 )
 
@@ -27,14 +27,14 @@ func TestRunAsAnyOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewRunAsAny %v", err)
 	}
-	_, err = NewRunAsAny(&policy.SELinuxStrategyOptions{})
+	_, err = NewRunAsAny(&extensions.SELinuxStrategyOptions{})
 	if err != nil {
 		t.Errorf("unexpected error initializing NewRunAsAny %v", err)
 	}
 }
 
 func TestRunAsAnyGenerate(t *testing.T) {
-	s, err := NewRunAsAny(&policy.SELinuxStrategyOptions{})
+	s, err := NewRunAsAny(&extensions.SELinuxStrategyOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewRunAsAny %v", err)
 	}
@@ -48,8 +48,8 @@ func TestRunAsAnyGenerate(t *testing.T) {
 }
 
 func TestRunAsAnyValidate(t *testing.T) {
-	s, err := NewRunAsAny(&policy.SELinuxStrategyOptions{
-		SELinuxOptions: &corev1.SELinuxOptions{
+	s, err := NewRunAsAny(&extensions.SELinuxStrategyOptions{
+		SELinuxOptions: &api.SELinuxOptions{
 			Level: "foo",
 		},
 	},
@@ -61,7 +61,7 @@ func TestRunAsAnyValidate(t *testing.T) {
 	if len(errs) != 0 {
 		t.Errorf("unexpected errors validating with ")
 	}
-	s, err = NewRunAsAny(&policy.SELinuxStrategyOptions{})
+	s, err = NewRunAsAny(&extensions.SELinuxStrategyOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error initializing NewRunAsAny %v", err)
 	}

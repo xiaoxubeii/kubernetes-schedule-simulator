@@ -18,7 +18,6 @@ package aws
 
 import (
 	"github.com/aws/aws-sdk-go/aws"
-
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
@@ -42,4 +41,10 @@ func stringSetFromPointers(in []*string) sets.String {
 		out.Insert(aws.StringValue(in[i]))
 	}
 	return out
+}
+
+// orZero returns the value, or 0 if the pointer is nil
+// Deprecated: prefer aws.Int64Value
+func orZero(v *int64) int64 {
+	return aws.Int64Value(v)
 }

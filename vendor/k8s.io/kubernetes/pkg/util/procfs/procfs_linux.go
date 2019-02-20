@@ -21,7 +21,6 @@ package procfs
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -32,8 +31,8 @@ import (
 	"syscall"
 	"unicode"
 
+	"github.com/golang/glog"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/klog"
 )
 
 type ProcFS struct{}
@@ -106,60 +105,47 @@ func PidOf(name string) ([]int, error) {
 
 func getPids(re *regexp.Regexp) []int {
 	pids := []int{}
-
-	dirFD, err := os.Open("/proc")
-	if err != nil {
-		return nil
-	}
-	defer dirFD.Close()
-
-	for {
-		// Read a small number at a time in case there are many entries, we don't want to
-		// allocate a lot here.
-		ls, err := dirFD.Readdir(10)
-		if err == io.EOF {
-			break
-		}
+	filepath.Walk("/proc", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			// We should continue processing other directories/files
 			return nil
 		}
-
-		for _, entry := range ls {
-			if !entry.IsDir() {
-				continue
-			}
-
+		base := filepath.Base(path)
+		// Traverse only the directories we are interested in
+		if info.IsDir() && path != "/proc" {
 			// If the directory is not a number (i.e. not a PID), skip it
-			pid, err := strconv.Atoi(entry.Name())
-			if err != nil {
-				continue
-			}
-
-			cmdline, err := ioutil.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
-			if err != nil {
-				klog.V(4).Infof("Error reading file %s: %+v", filepath.Join("/proc", entry.Name(), "cmdline"), err)
-				continue
-			}
-
-			// The bytes we read have '\0' as a separator for the command line
-			parts := bytes.SplitN(cmdline, []byte{0}, 2)
-			if len(parts) == 0 {
-				continue
-			}
-			// Split the command line itself we are interested in just the first part
-			exe := strings.FieldsFunc(string(parts[0]), func(c rune) bool {
-				return unicode.IsSpace(c) || c == ':'
-			})
-			if len(exe) == 0 {
-				continue
-			}
-			// Check if the name of the executable is what we are looking for
-			if re.MatchString(exe[0]) {
-				// Grab the PID from the directory path
-				pids = append(pids, pid)
+			if _, err := strconv.Atoi(base); err != nil {
+				return filepath.SkipDir
 			}
 		}
-	}
-
+		if base != "cmdline" {
+			return nil
+		}
+		cmdline, err := ioutil.ReadFile(path)
+		if err != nil {
+			glog.V(4).Infof("Error reading file %s: %+v", path, err)
+			return nil
+		}
+		// The bytes we read have '\0' as a separator for the command line
+		parts := bytes.SplitN(cmdline, []byte{0}, 2)
+		if len(parts) == 0 {
+			return nil
+		}
+		// Split the command line itself we are interested in just the first part
+		exe := strings.FieldsFunc(string(parts[0]), func(c rune) bool {
+			return unicode.IsSpace(c) || c == ':'
+		})
+		if len(exe) == 0 {
+			return nil
+		}
+		// Check if the name of the executable is what we are looking for
+		if re.MatchString(exe[0]) {
+			dirname := filepath.Base(filepath.Dir(path))
+			// Grab the PID from the directory path
+			pid, _ := strconv.Atoi(dirname)
+			pids = append(pids, pid)
+		}
+		return nil
+	})
 	return pids
 }

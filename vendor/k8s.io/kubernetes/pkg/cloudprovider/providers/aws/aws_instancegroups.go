@@ -21,7 +21,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 // AWSCloud implements InstanceGroups
@@ -42,7 +42,7 @@ func ResizeInstanceGroup(asg ASG, instanceGroupName string, size int) error {
 	return nil
 }
 
-// ResizeInstanceGroup implements InstanceGroups.ResizeInstanceGroup
+// Implement InstanceGroups.ResizeInstanceGroup
 // Set the size to the fixed size
 func (c *Cloud) ResizeInstanceGroup(instanceGroupName string, size int) error {
 	return ResizeInstanceGroup(c.asg, instanceGroupName, size)
@@ -64,13 +64,13 @@ func DescribeInstanceGroup(asg ASG, instanceGroupName string) (InstanceGroupInfo
 		return nil, nil
 	}
 	if len(response.AutoScalingGroups) > 1 {
-		klog.Warning("AWS returned multiple autoscaling groups with name ", instanceGroupName)
+		glog.Warning("AWS returned multiple autoscaling groups with name ", instanceGroupName)
 	}
 	group := response.AutoScalingGroups[0]
 	return &awsInstanceGroup{group: group}, nil
 }
 
-// DescribeInstanceGroup implements InstanceGroups.DescribeInstanceGroup
+// Implement InstanceGroups.DescribeInstanceGroup
 // Queries the cloud provider for information about the specified instance group
 func (c *Cloud) DescribeInstanceGroup(instanceGroupName string) (InstanceGroupInfo, error) {
 	return DescribeInstanceGroup(c.asg, instanceGroupName)

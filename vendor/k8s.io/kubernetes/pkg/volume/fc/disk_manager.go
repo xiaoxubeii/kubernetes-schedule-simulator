@@ -19,10 +19,9 @@ package fc
 import (
 	"os"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // Abstract interface to disk operations.
@@ -32,9 +31,7 @@ type diskManager interface {
 	// Attaches the disk to the kubelet's host machine.
 	AttachDisk(b fcDiskMounter) (string, error)
 	// Detaches the disk from the kubelet's host machine.
-	DetachDisk(disk fcDiskUnmounter, devicePath string) error
-	// Detaches the block disk from the kubelet's host machine.
-	DetachBlockFCDisk(disk fcDiskUnmapper, mntPath, devicePath string) error
+	DetachDisk(disk fcDiskUnmounter, devName string) error
 }
 
 // utility to mount a disk based filesystem
@@ -43,14 +40,14 @@ func diskSetUp(manager diskManager, b fcDiskMounter, volPath string, mounter mou
 	noMnt, err := mounter.IsLikelyNotMountPoint(volPath)
 
 	if err != nil && !os.IsNotExist(err) {
-		klog.Errorf("cannot validate mountpoint: %s", volPath)
+		glog.Errorf("cannot validate mountpoint: %s", volPath)
 		return err
 	}
 	if !noMnt {
 		return nil
 	}
 	if err := os.MkdirAll(volPath, 0750); err != nil {
-		klog.Errorf("failed to mkdir:%s", volPath)
+		glog.Errorf("failed to mkdir:%s", volPath)
 		return err
 	}
 	// Perform a bind mount to the full path to allow duplicate mounts of the same disk.
@@ -58,28 +55,27 @@ func diskSetUp(manager diskManager, b fcDiskMounter, volPath string, mounter mou
 	if b.readOnly {
 		options = append(options, "ro")
 	}
-	mountOptions := util.JoinMountOptions(options, b.mountOptions)
-	err = mounter.Mount(globalPDPath, volPath, "", mountOptions)
+	err = mounter.Mount(globalPDPath, volPath, "", options)
 	if err != nil {
-		klog.Errorf("Failed to bind mount: source:%s, target:%s, err:%v", globalPDPath, volPath, err)
+		glog.Errorf("Failed to bind mount: source:%s, target:%s, err:%v", globalPDPath, volPath, err)
 		noMnt, mntErr := b.mounter.IsLikelyNotMountPoint(volPath)
 		if mntErr != nil {
-			klog.Errorf("IsLikelyNotMountPoint check failed: %v", mntErr)
+			glog.Errorf("IsLikelyNotMountPoint check failed: %v", mntErr)
 			return err
 		}
 		if !noMnt {
 			if mntErr = b.mounter.Unmount(volPath); mntErr != nil {
-				klog.Errorf("Failed to unmount: %v", mntErr)
+				glog.Errorf("Failed to unmount: %v", mntErr)
 				return err
 			}
 			noMnt, mntErr = b.mounter.IsLikelyNotMountPoint(volPath)
 			if mntErr != nil {
-				klog.Errorf("IsLikelyNotMountPoint check failed: %v", mntErr)
+				glog.Errorf("IsLikelyNotMountPoint check failed: %v", mntErr)
 				return err
 			}
 			if !noMnt {
 				//  will most likely retry on next sync loop.
-				klog.Errorf("%s is still mounted, despite call to unmount().  Will try again next sync loop.", volPath)
+				glog.Errorf("%s is still mounted, despite call to unmount().  Will try again next sync loop.", volPath)
 				return err
 			}
 		}

@@ -17,7 +17,6 @@ limitations under the License.
 package testing
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/url"
@@ -27,6 +26,7 @@ import (
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/util/flowcontrol"
 	. "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/volume"
@@ -59,13 +59,34 @@ type FakeRuntime struct {
 	StatusErr         error
 }
 
+type FakeDirectStreamingRuntime struct {
+	*FakeRuntime
+
+	// Arguments to streaming method calls.
+	Args struct {
+		// Attach / Exec args
+		ContainerID ContainerID
+		Cmd         []string
+		Stdin       io.Reader
+		Stdout      io.WriteCloser
+		Stderr      io.WriteCloser
+		TTY         bool
+		// Port-forward args
+		Pod    *Pod
+		Port   int32
+		Stream io.ReadWriteCloser
+	}
+}
+
+var _ DirectStreamingRuntime = &FakeDirectStreamingRuntime{}
+
 const FakeHost = "localhost:12345"
 
-type FakeStreamingRuntime struct {
+type FakeIndirectStreamingRuntime struct {
 	*FakeRuntime
 }
 
-var _ StreamingRuntime = &FakeStreamingRuntime{}
+var _ IndirectStreamingRuntime = &FakeIndirectStreamingRuntime{}
 
 // FakeRuntime should implement Runtime.
 var _ Runtime = &FakeRuntime{}
@@ -290,7 +311,36 @@ func (f *FakeRuntime) GetPodStatus(uid types.UID, name, namespace string) (*PodS
 	return &status, f.Err
 }
 
-func (f *FakeRuntime) GetContainerLogs(_ context.Context, pod *v1.Pod, containerID ContainerID, logOptions *v1.PodLogOptions, stdout, stderr io.Writer) (err error) {
+func (f *FakeDirectStreamingRuntime) ExecInContainer(containerID ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize, timeout time.Duration) error {
+	f.Lock()
+	defer f.Unlock()
+
+	f.CalledFunctions = append(f.CalledFunctions, "ExecInContainer")
+	f.Args.ContainerID = containerID
+	f.Args.Cmd = cmd
+	f.Args.Stdin = stdin
+	f.Args.Stdout = stdout
+	f.Args.Stderr = stderr
+	f.Args.TTY = tty
+
+	return f.Err
+}
+
+func (f *FakeDirectStreamingRuntime) AttachContainer(containerID ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool, resize <-chan remotecommand.TerminalSize) error {
+	f.Lock()
+	defer f.Unlock()
+
+	f.CalledFunctions = append(f.CalledFunctions, "AttachContainer")
+	f.Args.ContainerID = containerID
+	f.Args.Stdin = stdin
+	f.Args.Stdout = stdout
+	f.Args.Stderr = stderr
+	f.Args.TTY = tty
+
+	return f.Err
+}
+
+func (f *FakeRuntime) GetContainerLogs(pod *v1.Pod, containerID ContainerID, logOptions *v1.PodLogOptions, stdout, stderr io.Writer) (err error) {
 	f.Lock()
 	defer f.Unlock()
 
@@ -344,6 +394,18 @@ func (f *FakeRuntime) RemoveImage(image ImageSpec) error {
 	return f.Err
 }
 
+func (f *FakeDirectStreamingRuntime) PortForward(pod *Pod, port int32, stream io.ReadWriteCloser) error {
+	f.Lock()
+	defer f.Unlock()
+
+	f.CalledFunctions = append(f.CalledFunctions, "PortForward")
+	f.Args.Pod = pod
+	f.Args.Port = port
+	f.Args.Stream = stream
+
+	return f.Err
+}
+
 func (f *FakeRuntime) GetNetNS(containerID ContainerID) (string, error) {
 	f.Lock()
 	defer f.Unlock()
@@ -393,7 +455,7 @@ func (f *FakeRuntime) ImageStats() (*ImageStats, error) {
 	return nil, f.Err
 }
 
-func (f *FakeStreamingRuntime) GetExec(id ContainerID, cmd []string, stdin, stdout, stderr, tty bool) (*url.URL, error) {
+func (f *FakeIndirectStreamingRuntime) GetExec(id ContainerID, cmd []string, stdin, stdout, stderr, tty bool) (*url.URL, error) {
 	f.Lock()
 	defer f.Unlock()
 
@@ -401,7 +463,7 @@ func (f *FakeStreamingRuntime) GetExec(id ContainerID, cmd []string, stdin, stdo
 	return &url.URL{Host: FakeHost}, f.Err
 }
 
-func (f *FakeStreamingRuntime) GetAttach(id ContainerID, stdin, stdout, stderr, tty bool) (*url.URL, error) {
+func (f *FakeIndirectStreamingRuntime) GetAttach(id ContainerID, stdin, stdout, stderr, tty bool) (*url.URL, error) {
 	f.Lock()
 	defer f.Unlock()
 
@@ -409,7 +471,7 @@ func (f *FakeStreamingRuntime) GetAttach(id ContainerID, stdin, stdout, stderr, 
 	return &url.URL{Host: FakeHost}, f.Err
 }
 
-func (f *FakeStreamingRuntime) GetPortForward(podName, podNamespace string, podUID types.UID, ports []int32) (*url.URL, error) {
+func (f *FakeIndirectStreamingRuntime) GetPortForward(podName, podNamespace string, podUID types.UID, ports []int32) (*url.URL, error) {
 	f.Lock()
 	defer f.Unlock()
 

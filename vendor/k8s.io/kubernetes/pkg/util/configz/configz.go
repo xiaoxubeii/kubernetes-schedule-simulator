@@ -19,6 +19,7 @@ package configz
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 )
@@ -73,7 +74,7 @@ func handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func write(w http.ResponseWriter) error {
+func write(w io.Writer) error {
 	var b []byte
 	var err error
 	func() {
@@ -84,7 +85,6 @@ func write(w http.ResponseWriter) error {
 	if err != nil {
 		return fmt.Errorf("error marshaling json: %v", err)
 	}
-	w.Header().Set("Content-Type", "application/json")
 	_, err = w.Write(b)
 	return err
 }

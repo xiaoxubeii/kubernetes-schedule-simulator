@@ -17,24 +17,24 @@ limitations under the License.
 package auth
 
 import (
+	"io"
+
 	"github.com/spf13/cobra"
-	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 )
 
-// NewCmdAuth returns an initialized Command instance for 'auth' sub command
-func NewCmdAuth(f cmdutil.Factory, streams genericclioptions.IOStreams) *cobra.Command {
+func NewCmdAuth(f cmdutil.Factory, out, errOut io.Writer) *cobra.Command {
 	// Parent command to which all subcommands are added.
 	cmds := &cobra.Command{
 		Use:   "auth",
 		Short: "Inspect authorization",
 		Long:  `Inspect authorization`,
-		Run:   cmdutil.DefaultSubCommandRun(streams.ErrOut),
+		Run:   cmdutil.DefaultSubCommandRun(errOut),
 	}
 
-	cmds.AddCommand(NewCmdCanI(f, streams))
-	cmds.AddCommand(NewCmdReconcile(f, streams))
+	cmds.AddCommand(NewCmdCanI(f, out, errOut))
+	cmds.AddCommand(NewCmdReconcile(f, out, errOut))
 
 	return cmds
 }

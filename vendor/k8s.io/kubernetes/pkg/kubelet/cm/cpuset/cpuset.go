@@ -19,7 +19,7 @@ package cpuset
 import (
 	"bytes"
 	"fmt"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 	"reflect"
 	"sort"
 	"strconv"
@@ -221,7 +221,7 @@ func (s CPUSet) String() string {
 func MustParse(s string) CPUSet {
 	res, err := Parse(s)
 	if err != nil {
-		klog.Fatalf("unable to parse [%s] as CPUSet: %v", s, err)
+		glog.Fatalf("unable to parse [%s] as CPUSet: %v", s, err)
 	}
 	return res
 }

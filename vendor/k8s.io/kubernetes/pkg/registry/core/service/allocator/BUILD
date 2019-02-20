@@ -22,8 +22,9 @@ go_test(
         "bitmap_test.go",
         "utils_test.go",
     ],
-    embed = [":go_default_library"],
-    deps = ["//staging/src/k8s.io/apimachinery/pkg/util/sets:go_default_library"],
+    importpath = "k8s.io/kubernetes/pkg/registry/core/service/allocator",
+    library = ":go_default_library",
+    deps = ["//vendor/k8s.io/apimachinery/pkg/util/sets:go_default_library"],
 )
 
 filegroup(

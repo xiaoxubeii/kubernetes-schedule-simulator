@@ -33,7 +33,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/pkg/controller"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 const (
@@ -99,7 +99,7 @@ func NewKubemarkController(externalClient kubeclient.Interface, externalInformer
 			nodesToDelete:     make(map[string]bool),
 			nodesToDeleteLock: sync.Mutex{},
 		},
-		rand:                   rand.New(rand.NewSource(time.Now().UnixNano())),
+		rand:                   rand.New(rand.NewSource(time.Now().UTC().UnixNano())),
 		createNodeQueue:        make(chan string, 1000),
 		nodeGroupQueueSize:     make(map[string]int),
 		nodeGroupQueueSizeLock: sync.Mutex{},
@@ -125,7 +125,7 @@ func (kubemarkController *KubemarkController) WaitForCacheSync(stopCh chan struc
 func (kubemarkController *KubemarkController) Run(stopCh chan struct{}) {
 	nodeTemplate, err := kubemarkController.getNodeTemplate()
 	if err != nil {
-		klog.Fatalf("failed to get node template: %s", err)
+		glog.Fatalf("failed to get node template: %s", err)
 	}
 	kubemarkController.nodeTemplate = nodeTemplate
 
@@ -239,7 +239,7 @@ func (kubemarkController *KubemarkController) addNodeToNodeGroup(nodeGroup strin
 func (kubemarkController *KubemarkController) RemoveNodeFromNodeGroup(nodeGroup string, node string) error {
 	pod := kubemarkController.getPodByName(node)
 	if pod == nil {
-		klog.Warningf("Can't delete node %s from nodegroup %s. Node does not exist.", node, nodeGroup)
+		glog.Warningf("Can't delete node %s from nodegroup %s. Node does not exist.", node, nodeGroup)
 		return nil
 	}
 	if pod.ObjectMeta.Labels[nodeGroupLabel] != nodeGroup {
@@ -252,7 +252,7 @@ func (kubemarkController *KubemarkController) RemoveNodeFromNodeGroup(nodeGroup 
 			pod.ObjectMeta.Labels["name"],
 			&metav1.DeleteOptions{PropagationPolicy: &policy})
 		if err == nil {
-			klog.Infof("marking node %s for deletion", node)
+			glog.Infof("marking node %s for deletion", node)
 			// Mark node for deletion from kubemark cluster.
 			// Once it becomes unready after replication controller
 			// deletion has been noticed, we will delete it explicitly.
@@ -340,7 +340,7 @@ func (kubemarkController *KubemarkController) runNodeCreation(stop <-chan struct
 			kubemarkController.nodeGroupQueueSizeLock.Lock()
 			err := kubemarkController.addNodeToNodeGroup(nodeGroup)
 			if err != nil {
-				klog.Errorf("failed to add node to node group %s: %v", nodeGroup, err)
+				glog.Errorf("failed to add node to node group %s: %v", nodeGroup, err)
 			} else {
 				kubemarkController.nodeGroupQueueSize[nodeGroup]--
 			}
@@ -376,7 +376,7 @@ func (kubemarkCluster *kubemarkCluster) removeUnneededNodes(oldObj interface{}, 
 			if kubemarkCluster.nodesToDelete[node.Name] {
 				kubemarkCluster.nodesToDelete[node.Name] = false
 				if err := kubemarkCluster.client.CoreV1().Nodes().Delete(node.Name, &metav1.DeleteOptions{}); err != nil {
-					klog.Errorf("failed to delete node %s from kubemark cluster, err: %v", node.Name, err)
+					glog.Errorf("failed to delete node %s from kubemark cluster, err: %v", node.Name, err)
 				}
 			}
 			return

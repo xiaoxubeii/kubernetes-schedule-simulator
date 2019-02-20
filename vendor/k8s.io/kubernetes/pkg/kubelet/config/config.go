@@ -21,13 +21,12 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/kubelet/checkpoint"
-	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/events"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
@@ -65,7 +64,7 @@ type PodConfig struct {
 	// contains the list of all configured sources
 	sourcesLock       sync.Mutex
 	sources           sets.String
-	checkpointManager checkpointmanager.CheckpointManager
+	checkpointManager checkpoint.Manager
 }
 
 // NewPodConfig creates an object that can merge many configuration sources into a stream
@@ -97,7 +96,7 @@ func (c *PodConfig) SeenAllSources(seenSources sets.String) bool {
 	if c.pods == nil {
 		return false
 	}
-	klog.V(5).Infof("Looking for %v, have seen %v", c.sources.List(), seenSources)
+	glog.V(6).Infof("Looking for %v, have seen %v", c.sources.List(), seenSources)
 	return seenSources.HasAll(c.sources.List()...) && c.pods.seenSources(c.sources.List()...)
 }
 
@@ -113,20 +112,15 @@ func (c *PodConfig) Sync() {
 
 // Restore restores pods from the checkpoint path, *once*
 func (c *PodConfig) Restore(path string, updates chan<- interface{}) error {
-	if c.checkpointManager != nil {
-		return nil
-	}
 	var err error
-	c.checkpointManager, err = checkpointmanager.NewCheckpointManager(path)
-	if err != nil {
-		return err
+	if c.checkpointManager == nil {
+		c.checkpointManager = checkpoint.NewCheckpointManager(path)
+		pods, err := c.checkpointManager.LoadPods()
+		if err == nil {
+			updates <- kubetypes.PodUpdate{Pods: pods, Op: kubetypes.RESTORE, Source: kubetypes.ApiserverSource}
+		}
 	}
-	pods, err := checkpoint.LoadPods(c.checkpointManager)
-	if err != nil {
-		return err
-	}
-	updates <- kubetypes.PodUpdate{Pods: pods, Op: kubetypes.RESTORE, Source: kubetypes.ApiserverSource}
-	return nil
+	return err
 }
 
 // podStorage manages the current pod state at any point in time and ensures updates
@@ -279,16 +273,16 @@ func (s *podStorage) merge(source string, change interface{}) (adds, updates, de
 	switch update.Op {
 	case kubetypes.ADD, kubetypes.UPDATE, kubetypes.DELETE:
 		if update.Op == kubetypes.ADD {
-			klog.V(4).Infof("Adding new pods from source %s : %v", source, update.Pods)
+			glog.V(4).Infof("Adding new pods from source %s : %v", source, update.Pods)
 		} else if update.Op == kubetypes.DELETE {
-			klog.V(4).Infof("Graceful deleting pods from source %s : %v", source, update.Pods)
+			glog.V(4).Infof("Graceful deleting pods from source %s : %v", source, update.Pods)
 		} else {
-			klog.V(4).Infof("Updating pods from source %s : %v", source, update.Pods)
+			glog.V(4).Infof("Updating pods from source %s : %v", source, update.Pods)
 		}
 		updatePodsFunc(update.Pods, pods, pods)
 
 	case kubetypes.REMOVE:
-		klog.V(4).Infof("Removing pods from source %s : %v", source, update.Pods)
+		glog.V(4).Infof("Removing pods from source %s : %v", source, update.Pods)
 		for _, value := range update.Pods {
 			if existing, found := pods[value.UID]; found {
 				// this is a delete
@@ -300,7 +294,7 @@ func (s *podStorage) merge(source string, change interface{}) (adds, updates, de
 		}
 
 	case kubetypes.SET:
-		klog.V(4).Infof("Setting pods for source %s", source)
+		glog.V(4).Infof("Setting pods for source %s", source)
 		s.markSourceSet(source)
 		// Clear the old map entries by just creating a new map
 		oldPods := pods
@@ -313,13 +307,10 @@ func (s *podStorage) merge(source string, change interface{}) (adds, updates, de
 			}
 		}
 	case kubetypes.RESTORE:
-		klog.V(4).Infof("Restoring pods for source %s", source)
-		for _, value := range update.Pods {
-			restorePods = append(restorePods, value)
-		}
+		glog.V(4).Infof("Restoring pods for source %s", source)
 
 	default:
-		klog.Warningf("Received invalid update type: %v", update)
+		glog.Warningf("Received invalid update type: %v", update)
 
 	}
 
@@ -354,7 +345,7 @@ func filterInvalidPods(pods []*v1.Pod, source string, recorder record.EventRecor
 		// This function only checks if there is any naming conflict.
 		name := kubecontainer.GetPodFullName(pod)
 		if names.Has(name) {
-			klog.Warningf("Pod[%d] (%s) from %s failed validation due to duplicate pod name %q, ignoring", i+1, format.Pod(pod), source, pod.Name)
+			glog.Warningf("Pod[%d] (%s) from %s failed validation due to duplicate pod name %q, ignoring", i+1, format.Pod(pod), source, pod.Name)
 			recorder.Eventf(pod, v1.EventTypeWarning, events.FailedValidation, "Error validating pod %s from %s due to duplicate pod name %q, ignoring", format.Pod(pod), source, pod.Name)
 			continue
 		} else {
@@ -411,7 +402,7 @@ func isAnnotationMapEqual(existingMap, candidateMap map[string]string) bool {
 
 // recordFirstSeenTime records the first seen time of this pod.
 func recordFirstSeenTime(pod *v1.Pod) {
-	klog.V(4).Infof("Receiving a new pod %q", format.Pod(pod))
+	glog.V(4).Infof("Receiving a new pod %q", format.Pod(pod))
 	pod.Annotations[kubetypes.ConfigFirstSeenAnnotationKey] = kubetypes.NewTimestamp().GetString()
 }
 

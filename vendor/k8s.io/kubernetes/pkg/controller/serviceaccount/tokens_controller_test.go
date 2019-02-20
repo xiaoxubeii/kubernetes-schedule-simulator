@@ -23,8 +23,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"gopkg.in/square/go-jose.v2/jwt"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	"k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,11 +39,15 @@ import (
 )
 
 type testGenerator struct {
-	Token string
-	Err   error
+	GeneratedServiceAccounts []v1.ServiceAccount
+	GeneratedSecrets         []v1.Secret
+	Token                    string
+	Err                      error
 }
 
-func (t *testGenerator) GenerateToken(sc *jwt.Claims, pc interface{}) (string, error) {
+func (t *testGenerator) GenerateToken(serviceAccount v1.ServiceAccount, secret v1.Secret) (string, error) {
+	t.GeneratedSecrets = append(t.GeneratedSecrets, secret)
+	t.GeneratedServiceAccounts = append(t.GeneratedServiceAccounts, serviceAccount)
 	return t.Token, t.Err
 }
 
@@ -474,7 +477,7 @@ func TestTokenCreation(t *testing.T) {
 
 			AddedSecret:     serviceAccountTokenSecretWithNamespaceData([]byte("custom")),
 			ExpectedActions: []core.Action{
-				// no update is performed... the custom namespace is preserved
+			// no update is performed... the custom namespace is preserved
 			},
 		},
 
@@ -539,7 +542,7 @@ func TestTokenCreation(t *testing.T) {
 
 			UpdatedSecret:   serviceAccountTokenSecretWithNamespaceData([]byte("custom")),
 			ExpectedActions: []core.Action{
-				// no update is performed... the custom namespace is preserved
+			// no update is performed... the custom namespace is preserved
 			},
 		},
 
@@ -568,7 +571,7 @@ func TestTokenCreation(t *testing.T) {
 	}
 
 	for k, tc := range testcases {
-		klog.Infof(k)
+		glog.Infof(k)
 
 		// Re-seed to reset name generation
 		utilrand.Seed(1)

@@ -17,7 +17,6 @@ limitations under the License.
 package pod
 
 import (
-	"context"
 	"net/url"
 	"reflect"
 	"testing"
@@ -30,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	apitesting "k8s.io/kubernetes/pkg/api/testing"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/kubelet/client"
@@ -88,20 +88,6 @@ func TestMatchPod(t *testing.T) {
 		},
 		{
 			in: &api.Pod{
-				Spec: api.PodSpec{ServiceAccountName: "serviceAccount1"},
-			},
-			fieldSelector: fields.ParseSelectorOrDie("spec.serviceAccountName=serviceAccount1"),
-			expectMatch:   true,
-		},
-		{
-			in: &api.Pod{
-				Spec: api.PodSpec{SchedulerName: "serviceAccount1"},
-			},
-			fieldSelector: fields.ParseSelectorOrDie("spec.serviceAccountName=serviceAccount2"),
-			expectMatch:   false,
-		},
-		{
-			in: &api.Pod{
 				Status: api.PodStatus{Phase: api.PodRunning},
 			},
 			fieldSelector: fields.ParseSelectorOrDie("status.phase=Running"),
@@ -128,20 +114,7 @@ func TestMatchPod(t *testing.T) {
 			fieldSelector: fields.ParseSelectorOrDie("status.podIP=4.3.2.1"),
 			expectMatch:   false,
 		},
-		{
-			in: &api.Pod{
-				Status: api.PodStatus{NominatedNodeName: "node1"},
-			},
-			fieldSelector: fields.ParseSelectorOrDie("status.nominatedNodeName=node1"),
-			expectMatch:   true,
-		},
-		{
-			in: &api.Pod{
-				Status: api.PodStatus{NominatedNodeName: "node1"},
-			},
-			fieldSelector: fields.ParseSelectorOrDie("status.nominatedNodeName=node2"),
-			expectMatch:   false,
-		}}
+	}
 	for _, testCase := range testCases {
 		m := MatchPod(labels.Everything(), testCase.fieldSelector)
 		result, err := m.Matches(testCase.in)
@@ -163,6 +136,11 @@ func getResourceList(cpu, memory string) api.ResourceList {
 		res[api.ResourceMemory] = resource.MustParse(memory)
 	}
 	return res
+}
+
+func addResource(rName, value string, rl api.ResourceList) api.ResourceList {
+	rl[api.ResourceName(rName)] = resource.MustParse(value)
+	return rl
 }
 
 func getResourceRequirements(requests, limits api.ResourceList) api.ResourceRequirements {
@@ -282,7 +260,7 @@ type mockPodGetter struct {
 	pod *api.Pod
 }
 
-func (g mockPodGetter) Get(context.Context, string, *metav1.GetOptions) (runtime.Object, error) {
+func (g mockPodGetter) Get(genericapirequest.Context, string, *metav1.GetOptions) (runtime.Object, error) {
 	return g.pod, nil
 }
 
@@ -384,7 +362,7 @@ func TestCheckLogLocation(t *testing.T) {
 
 func TestSelectableFieldLabelConversions(t *testing.T) {
 	apitesting.TestSelectableFieldLabelConversionsOfKind(t,
-		"v1",
+		legacyscheme.Registry.GroupOrDie(api.GroupName).GroupVersion.String(),
 		"Pod",
 		PodToSelectableFields(&api.Pod{}),
 		nil,
@@ -395,7 +373,7 @@ type mockConnectionInfoGetter struct {
 	info *client.ConnectionInfo
 }
 
-func (g mockConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeName types.NodeName) (*client.ConnectionInfo, error) {
+func (g mockConnectionInfoGetter) GetConnectionInfo(nodeName types.NodeName) (*client.ConnectionInfo, error) {
 	return g.info, nil
 }
 

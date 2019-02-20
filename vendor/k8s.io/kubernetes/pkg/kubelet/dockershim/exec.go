@@ -22,7 +22,7 @@ import (
 	"time"
 
 	dockertypes "github.com/docker/docker/api/types"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	"k8s.io/client-go/tools/remotecommand"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
@@ -124,7 +124,7 @@ func (*NativeExecHandler) ExecInContainer(client libdocker.Interface, container 
 
 		count++
 		if count == 5 {
-			klog.Errorf("Exec session %s in container %s terminated but process still running!", execObj.ID, container.ID)
+			glog.Errorf("Exec session %s in container %s terminated but process still running!", execObj.ID, container.ID)
 			break
 		}
 

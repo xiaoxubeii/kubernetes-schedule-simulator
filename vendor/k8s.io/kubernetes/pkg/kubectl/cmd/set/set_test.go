@@ -17,17 +17,20 @@ limitations under the License.
 package set
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/spf13/cobra"
 
-	"k8s.io/cli-runtime/pkg/genericclioptions"
 	clientcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
+	"os"
 )
 
 func TestLocalAndDryRunFlags(t *testing.T) {
-	f := clientcmdutil.NewFactory(genericclioptions.NewTestConfigFlags())
-	setCmd := NewCmdSet(f, genericclioptions.NewTestIOStreamsDiscard())
+	out := &bytes.Buffer{}
+	errout := &bytes.Buffer{}
+	f := clientcmdutil.NewFactory(nil)
+	setCmd := NewCmdSet(f, os.Stdin, out, errout)
 	ensureLocalAndDryRunFlagsOnChildren(t, setCmd, "")
 }
 

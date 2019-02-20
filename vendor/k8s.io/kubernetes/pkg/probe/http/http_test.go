@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,62 +31,6 @@ import (
 )
 
 const FailureCode int = -1
-
-func setEnv(key, value string) func() {
-	originalValue := os.Getenv(key)
-	os.Setenv(key, value)
-	if len(originalValue) > 0 {
-		return func() {
-			os.Setenv(key, originalValue)
-		}
-	}
-	return func() {}
-}
-
-func unsetEnv(key string) func() {
-	originalValue := os.Getenv(key)
-	os.Unsetenv(key)
-	if len(originalValue) > 0 {
-		return func() {
-			os.Setenv(key, originalValue)
-		}
-	}
-	return func() {}
-}
-
-func TestHTTPProbeProxy(t *testing.T) {
-	res := "welcome to http probe proxy"
-	localProxy := "http://127.0.0.1:9098/"
-
-	defer setEnv("http_proxy", localProxy)()
-	defer setEnv("HTTP_PROXY", localProxy)()
-	defer unsetEnv("no_proxy")()
-	defer unsetEnv("NO_PROXY")()
-
-	prober := New()
-
-	go func() {
-		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprintf(w, res)
-		})
-		err := http.ListenAndServe(":9098", nil)
-		if err != nil {
-			t.Errorf("Failed to start foo server: localhost:9098")
-		}
-	}()
-
-	// take some time to wait server boot
-	time.Sleep(2 * time.Second)
-	url, err := url.Parse("http://example.com")
-	if err != nil {
-		t.Errorf("proxy test unexpected error: %v", err)
-	}
-	_, response, _ := prober.Probe(url, http.Header{}, time.Second*3)
-
-	if response == res {
-		t.Errorf("proxy test unexpected error: the probe is using proxy")
-	}
-}
 
 func TestHTTPProbeChecker(t *testing.T) {
 	handleReq := func(s int, body string) func(w http.ResponseWriter, r *http.Request) {
@@ -107,16 +50,6 @@ func TestHTTPProbeChecker(t *testing.T) {
 			}
 		}
 		w.Write([]byte(output))
-	}
-
-	redirectHandler := func(s int, bad bool) func(w http.ResponseWriter, r *http.Request) {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/" {
-				http.Redirect(w, r, "/new", s)
-			} else if bad && r.URL.Path == "/new" {
-				http.Error(w, "", http.StatusInternalServerError)
-			}
-		}
 	}
 
 	prober := New()
@@ -188,38 +121,6 @@ func TestHTTPProbeChecker(t *testing.T) {
 				time.Sleep(3 * time.Second)
 			},
 			health: probe.Failure,
-		},
-		{
-			handler: redirectHandler(http.StatusMovedPermanently, false), // 301
-			health:  probe.Success,
-		},
-		{
-			handler: redirectHandler(http.StatusMovedPermanently, true), // 301
-			health:  probe.Failure,
-		},
-		{
-			handler: redirectHandler(http.StatusFound, false), // 302
-			health:  probe.Success,
-		},
-		{
-			handler: redirectHandler(http.StatusFound, true), // 302
-			health:  probe.Failure,
-		},
-		{
-			handler: redirectHandler(http.StatusTemporaryRedirect, false), // 307
-			health:  probe.Success,
-		},
-		{
-			handler: redirectHandler(http.StatusTemporaryRedirect, true), // 307
-			health:  probe.Failure,
-		},
-		{
-			handler: redirectHandler(http.StatusPermanentRedirect, false), // 308
-			health:  probe.Success,
-		},
-		{
-			handler: redirectHandler(http.StatusPermanentRedirect, true), // 308
-			health:  probe.Failure,
 		},
 	}
 	for i, test := range testCases {

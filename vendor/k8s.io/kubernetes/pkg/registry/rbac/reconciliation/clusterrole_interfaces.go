@@ -17,17 +17,17 @@ limitations under the License.
 package reconciliation
 
 import (
-	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	rbacv1client "k8s.io/client-go/kubernetes/typed/rbac/v1"
+	"k8s.io/kubernetes/pkg/apis/rbac"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/rbac/internalversion"
 )
 
 // +k8s:deepcopy-gen=true
 // +k8s:deepcopy-gen:interfaces=k8s.io/kubernetes/pkg/registry/rbac/reconciliation.RuleOwner
 // +k8s:deepcopy-gen:nonpointer-interfaces=true
 type ClusterRoleRuleOwner struct {
-	ClusterRole *rbacv1.ClusterRole
+	ClusterRole *rbac.ClusterRole
 }
 
 func (o ClusterRoleRuleOwner) GetObject() runtime.Object {
@@ -58,24 +58,24 @@ func (o ClusterRoleRuleOwner) SetAnnotations(in map[string]string) {
 	o.ClusterRole.Annotations = in
 }
 
-func (o ClusterRoleRuleOwner) GetRules() []rbacv1.PolicyRule {
+func (o ClusterRoleRuleOwner) GetRules() []rbac.PolicyRule {
 	return o.ClusterRole.Rules
 }
 
-func (o ClusterRoleRuleOwner) SetRules(in []rbacv1.PolicyRule) {
+func (o ClusterRoleRuleOwner) SetRules(in []rbac.PolicyRule) {
 	o.ClusterRole.Rules = in
 }
 
-func (o ClusterRoleRuleOwner) GetAggregationRule() *rbacv1.AggregationRule {
+func (o ClusterRoleRuleOwner) GetAggregationRule() *rbac.AggregationRule {
 	return o.ClusterRole.AggregationRule
 }
 
-func (o ClusterRoleRuleOwner) SetAggregationRule(in *rbacv1.AggregationRule) {
+func (o ClusterRoleRuleOwner) SetAggregationRule(in *rbac.AggregationRule) {
 	o.ClusterRole.AggregationRule = in
 }
 
 type ClusterRoleModifier struct {
-	Client rbacv1client.ClusterRoleInterface
+	Client internalversion.ClusterRoleInterface
 }
 
 func (c ClusterRoleModifier) Get(namespace, name string) (RuleOwner, error) {

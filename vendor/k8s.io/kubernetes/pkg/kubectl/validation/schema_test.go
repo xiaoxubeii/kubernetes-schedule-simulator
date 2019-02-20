@@ -126,16 +126,14 @@ func TestConjunctiveSchema(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			schema := ConjunctiveSchema(tt.schemas)
-			err := schema.ValidateBytes([]byte{})
-			if err != nil && tt.shouldPass {
-				t.Errorf("Unexpected error: %v in %s", err, tt.name)
-			}
-			if err == nil && !tt.shouldPass {
-				t.Errorf("Unexpected non-error: %s", tt.name)
-			}
-		})
+	for _, test := range tests {
+		schema := ConjunctiveSchema(test.schemas)
+		err := schema.ValidateBytes([]byte{})
+		if err != nil && test.shouldPass {
+			t.Errorf("Unexpected error: %v in %s", err, test.name)
+		}
+		if err == nil && !test.shouldPass {
+			t.Errorf("Unexpected non-error: %s", test.name)
+		}
 	}
 }

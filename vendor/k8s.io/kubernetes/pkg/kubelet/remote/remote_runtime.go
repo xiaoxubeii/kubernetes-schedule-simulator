@@ -17,18 +17,17 @@ limitations under the License.
 package remote
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/golang/glog"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	"k8s.io/klog"
 
 	internalapi "k8s.io/kubernetes/pkg/kubelet/apis/cri"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 	"k8s.io/kubernetes/pkg/kubelet/util"
 	utilexec "k8s.io/utils/exec"
 )
@@ -37,39 +36,24 @@ import (
 type RemoteRuntimeService struct {
 	timeout       time.Duration
 	runtimeClient runtimeapi.RuntimeServiceClient
-	// Cache last per-container error message to reduce log spam
-	lastError map[string]string
-	// Time last per-container error message was printed
-	errorPrinted map[string]time.Time
-	errorMapLock sync.Mutex
 }
-
-const (
-	// How frequently to report identical errors
-	identicalErrorDelay = 1 * time.Minute
-)
 
 // NewRemoteRuntimeService creates a new internalapi.RuntimeService.
 func NewRemoteRuntimeService(endpoint string, connectionTimeout time.Duration) (internalapi.RuntimeService, error) {
-	klog.V(3).Infof("Connecting to runtime service %s", endpoint)
+	glog.Infof("Connecting to runtime service %s", endpoint)
 	addr, dailer, err := util.GetAddressAndDialer(endpoint)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, addr, grpc.WithInsecure(), grpc.WithDialer(dailer), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)))
+	conn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(connectionTimeout), grpc.WithDialer(dailer))
 	if err != nil {
-		klog.Errorf("Connect remote runtime %s failed: %v", addr, err)
+		glog.Errorf("Connect remote runtime %s failed: %v", addr, err)
 		return nil, err
 	}
 
 	return &RemoteRuntimeService{
 		timeout:       connectionTimeout,
 		runtimeClient: runtimeapi.NewRuntimeServiceClient(conn),
-		lastError:     make(map[string]string),
-		errorPrinted:  make(map[string]time.Time),
 	}, nil
 }
 
@@ -82,7 +66,7 @@ func (r *RemoteRuntimeService) Version(apiVersion string) (*runtimeapi.VersionRe
 		Version: apiVersion,
 	})
 	if err != nil {
-		klog.Errorf("Version from runtime service failed: %v", err)
+		glog.Errorf("Version from runtime service failed: %v", err)
 		return nil, err
 	}
 
@@ -95,24 +79,23 @@ func (r *RemoteRuntimeService) Version(apiVersion string) (*runtimeapi.VersionRe
 
 // RunPodSandbox creates and starts a pod-level sandbox. Runtimes should ensure
 // the sandbox is in ready state.
-func (r *RemoteRuntimeService) RunPodSandbox(config *runtimeapi.PodSandboxConfig, runtimeHandler string) (string, error) {
+func (r *RemoteRuntimeService) RunPodSandbox(config *runtimeapi.PodSandboxConfig) (string, error) {
 	// Use 2 times longer timeout for sandbox operation (4 mins by default)
 	// TODO: Make the pod sandbox timeout configurable.
 	ctx, cancel := getContextWithTimeout(r.timeout * 2)
 	defer cancel()
 
 	resp, err := r.runtimeClient.RunPodSandbox(ctx, &runtimeapi.RunPodSandboxRequest{
-		Config:         config,
-		RuntimeHandler: runtimeHandler,
+		Config: config,
 	})
 	if err != nil {
-		klog.Errorf("RunPodSandbox from runtime service failed: %v", err)
+		glog.Errorf("RunPodSandbox from runtime service failed: %v", err)
 		return "", err
 	}
 
 	if resp.PodSandboxId == "" {
 		errorMessage := fmt.Sprintf("PodSandboxId is not set for sandbox %q", config.GetMetadata())
-		klog.Errorf("RunPodSandbox failed: %s", errorMessage)
+		glog.Errorf("RunPodSandbox failed: %s", errorMessage)
 		return "", errors.New(errorMessage)
 	}
 
@@ -129,7 +112,7 @@ func (r *RemoteRuntimeService) StopPodSandbox(podSandBoxID string) error {
 		PodSandboxId: podSandBoxID,
 	})
 	if err != nil {
-		klog.Errorf("StopPodSandbox %q from runtime service failed: %v", podSandBoxID, err)
+		glog.Errorf("StopPodSandbox %q from runtime service failed: %v", podSandBoxID, err)
 		return err
 	}
 
@@ -146,7 +129,7 @@ func (r *RemoteRuntimeService) RemovePodSandbox(podSandBoxID string) error {
 		PodSandboxId: podSandBoxID,
 	})
 	if err != nil {
-		klog.Errorf("RemovePodSandbox %q from runtime service failed: %v", podSandBoxID, err)
+		glog.Errorf("RemovePodSandbox %q from runtime service failed: %v", podSandBoxID, err)
 		return err
 	}
 
@@ -183,7 +166,7 @@ func (r *RemoteRuntimeService) ListPodSandbox(filter *runtimeapi.PodSandboxFilte
 		Filter: filter,
 	})
 	if err != nil {
-		klog.Errorf("ListPodSandbox with filter %+v from runtime service failed: %v", filter, err)
+		glog.Errorf("ListPodSandbox with filter %+v from runtime service failed: %v", filter, err)
 		return nil, err
 	}
 
@@ -201,13 +184,13 @@ func (r *RemoteRuntimeService) CreateContainer(podSandBoxID string, config *runt
 		SandboxConfig: sandboxConfig,
 	})
 	if err != nil {
-		klog.Errorf("CreateContainer in sandbox %q from runtime service failed: %v", podSandBoxID, err)
+		glog.Errorf("CreateContainer in sandbox %q from runtime service failed: %v", podSandBoxID, err)
 		return "", err
 	}
 
 	if resp.ContainerId == "" {
 		errorMessage := fmt.Sprintf("ContainerId is not set for container %q", config.GetMetadata())
-		klog.Errorf("CreateContainer failed: %s", errorMessage)
+		glog.Errorf("CreateContainer failed: %s", errorMessage)
 		return "", errors.New(errorMessage)
 	}
 
@@ -223,7 +206,7 @@ func (r *RemoteRuntimeService) StartContainer(containerID string) error {
 		ContainerId: containerID,
 	})
 	if err != nil {
-		klog.Errorf("StartContainer %q from runtime service failed: %v", containerID, err)
+		glog.Errorf("StartContainer %q from runtime service failed: %v", containerID, err)
 		return err
 	}
 
@@ -238,16 +221,12 @@ func (r *RemoteRuntimeService) StopContainer(containerID string, timeout int64) 
 	ctx, cancel := getContextWithTimeout(t)
 	defer cancel()
 
-	r.errorMapLock.Lock()
-	delete(r.lastError, containerID)
-	delete(r.errorPrinted, containerID)
-	r.errorMapLock.Unlock()
 	_, err := r.runtimeClient.StopContainer(ctx, &runtimeapi.StopContainerRequest{
 		ContainerId: containerID,
 		Timeout:     timeout,
 	})
 	if err != nil {
-		klog.Errorf("StopContainer %q from runtime service failed: %v", containerID, err)
+		glog.Errorf("StopContainer %q from runtime service failed: %v", containerID, err)
 		return err
 	}
 
@@ -260,15 +239,11 @@ func (r *RemoteRuntimeService) RemoveContainer(containerID string) error {
 	ctx, cancel := getContextWithTimeout(r.timeout)
 	defer cancel()
 
-	r.errorMapLock.Lock()
-	delete(r.lastError, containerID)
-	delete(r.errorPrinted, containerID)
-	r.errorMapLock.Unlock()
 	_, err := r.runtimeClient.RemoveContainer(ctx, &runtimeapi.RemoveContainerRequest{
 		ContainerId: containerID,
 	})
 	if err != nil {
-		klog.Errorf("RemoveContainer %q from runtime service failed: %v", containerID, err)
+		glog.Errorf("RemoveContainer %q from runtime service failed: %v", containerID, err)
 		return err
 	}
 
@@ -284,23 +259,11 @@ func (r *RemoteRuntimeService) ListContainers(filter *runtimeapi.ContainerFilter
 		Filter: filter,
 	})
 	if err != nil {
-		klog.Errorf("ListContainers with filter %+v from runtime service failed: %v", filter, err)
+		glog.Errorf("ListContainers with filter %+v from runtime service failed: %v", filter, err)
 		return nil, err
 	}
 
 	return resp.Containers, nil
-}
-
-// Clean up any expired last-error timers
-func (r *RemoteRuntimeService) cleanupErrorTimeouts() {
-	r.errorMapLock.Lock()
-	defer r.errorMapLock.Unlock()
-	for ID, timeout := range r.errorPrinted {
-		if time.Now().Sub(timeout) >= identicalErrorDelay {
-			delete(r.lastError, ID)
-			delete(r.errorPrinted, ID)
-		}
-	}
 }
 
 // ContainerStatus returns the container status.
@@ -311,25 +274,14 @@ func (r *RemoteRuntimeService) ContainerStatus(containerID string) (*runtimeapi.
 	resp, err := r.runtimeClient.ContainerStatus(ctx, &runtimeapi.ContainerStatusRequest{
 		ContainerId: containerID,
 	})
-	r.cleanupErrorTimeouts()
-	r.errorMapLock.Lock()
-	defer r.errorMapLock.Unlock()
 	if err != nil {
-		// Don't spam the log with endless messages about the same failure.
-		lastMsg, ok := r.lastError[containerID]
-		if !ok || err.Error() != lastMsg || time.Now().Sub(r.errorPrinted[containerID]) >= identicalErrorDelay {
-			klog.Errorf("ContainerStatus %q from runtime service failed: %v", containerID, err)
-			r.errorPrinted[containerID] = time.Now()
-			r.lastError[containerID] = err.Error()
-		}
+		glog.Errorf("ContainerStatus %q from runtime service failed: %v", containerID, err)
 		return nil, err
 	}
-	delete(r.lastError, containerID)
-	delete(r.errorPrinted, containerID)
 
 	if resp.Status != nil {
 		if err := verifyContainerStatus(resp.Status); err != nil {
-			klog.Errorf("ContainerStatus of %q failed: %v", containerID, err)
+			glog.Errorf("ContainerStatus of %q failed: %v", containerID, err)
 			return nil, err
 		}
 	}
@@ -347,7 +299,7 @@ func (r *RemoteRuntimeService) UpdateContainerResources(containerID string, reso
 		Linux:       resources,
 	})
 	if err != nil {
-		klog.Errorf("UpdateContainerResources %q from runtime service failed: %v", containerID, err)
+		glog.Errorf("UpdateContainerResources %q from runtime service failed: %v", containerID, err)
 		return err
 	}
 
@@ -377,7 +329,7 @@ func (r *RemoteRuntimeService) ExecSync(containerID string, cmd []string, timeou
 	}
 	resp, err := r.runtimeClient.ExecSync(ctx, req)
 	if err != nil {
-		klog.Errorf("ExecSync %s '%s' from runtime service failed: %v", containerID, strings.Join(cmd, " "), err)
+		glog.Errorf("ExecSync %s '%s' from runtime service failed: %v", containerID, strings.Join(cmd, " "), err)
 		return nil, nil, err
 	}
 
@@ -399,13 +351,13 @@ func (r *RemoteRuntimeService) Exec(req *runtimeapi.ExecRequest) (*runtimeapi.Ex
 
 	resp, err := r.runtimeClient.Exec(ctx, req)
 	if err != nil {
-		klog.Errorf("Exec %s '%s' from runtime service failed: %v", req.ContainerId, strings.Join(req.Cmd, " "), err)
+		glog.Errorf("Exec %s '%s' from runtime service failed: %v", req.ContainerId, strings.Join(req.Cmd, " "), err)
 		return nil, err
 	}
 
 	if resp.Url == "" {
 		errorMessage := "URL is not set"
-		klog.Errorf("Exec failed: %s", errorMessage)
+		glog.Errorf("Exec failed: %s", errorMessage)
 		return nil, errors.New(errorMessage)
 	}
 
@@ -419,13 +371,13 @@ func (r *RemoteRuntimeService) Attach(req *runtimeapi.AttachRequest) (*runtimeap
 
 	resp, err := r.runtimeClient.Attach(ctx, req)
 	if err != nil {
-		klog.Errorf("Attach %s from runtime service failed: %v", req.ContainerId, err)
+		glog.Errorf("Attach %s from runtime service failed: %v", req.ContainerId, err)
 		return nil, err
 	}
 
 	if resp.Url == "" {
 		errorMessage := "URL is not set"
-		klog.Errorf("Exec failed: %s", errorMessage)
+		glog.Errorf("Exec failed: %s", errorMessage)
 		return nil, errors.New(errorMessage)
 	}
 	return resp, nil
@@ -438,13 +390,13 @@ func (r *RemoteRuntimeService) PortForward(req *runtimeapi.PortForwardRequest) (
 
 	resp, err := r.runtimeClient.PortForward(ctx, req)
 	if err != nil {
-		klog.Errorf("PortForward %s from runtime service failed: %v", req.PodSandboxId, err)
+		glog.Errorf("PortForward %s from runtime service failed: %v", req.PodSandboxId, err)
 		return nil, err
 	}
 
 	if resp.Url == "" {
 		errorMessage := "URL is not set"
-		klog.Errorf("Exec failed: %s", errorMessage)
+		glog.Errorf("Exec failed: %s", errorMessage)
 		return nil, errors.New(errorMessage)
 	}
 
@@ -479,13 +431,13 @@ func (r *RemoteRuntimeService) Status() (*runtimeapi.RuntimeStatus, error) {
 
 	resp, err := r.runtimeClient.Status(ctx, &runtimeapi.StatusRequest{})
 	if err != nil {
-		klog.Errorf("Status from runtime service failed: %v", err)
+		glog.Errorf("Status from runtime service failed: %v", err)
 		return nil, err
 	}
 
 	if resp.Status == nil || len(resp.Status.Conditions) < 2 {
 		errorMessage := "RuntimeReady or NetworkReady condition are not set"
-		klog.Errorf("Status failed: %s", errorMessage)
+		glog.Errorf("Status failed: %s", errorMessage)
 		return nil, errors.New(errorMessage)
 	}
 
@@ -500,20 +452,10 @@ func (r *RemoteRuntimeService) ContainerStats(containerID string) (*runtimeapi.C
 	resp, err := r.runtimeClient.ContainerStats(ctx, &runtimeapi.ContainerStatsRequest{
 		ContainerId: containerID,
 	})
-	r.cleanupErrorTimeouts()
-	r.errorMapLock.Lock()
-	defer r.errorMapLock.Unlock()
 	if err != nil {
-		lastMsg, ok := r.lastError[containerID]
-		if !ok || err.Error() != lastMsg || time.Now().Sub(r.errorPrinted[containerID]) >= identicalErrorDelay {
-			klog.Errorf("ContainerStatus %q from runtime service failed: %v", containerID, err)
-			r.errorPrinted[containerID] = time.Now()
-			r.lastError[containerID] = err.Error()
-		}
+		glog.Errorf("ContainerStatus %q from runtime service failed: %v", containerID, err)
 		return nil, err
 	}
-	delete(r.lastError, containerID)
-	delete(r.errorPrinted, containerID)
 
 	return resp.GetStats(), nil
 }
@@ -528,21 +470,9 @@ func (r *RemoteRuntimeService) ListContainerStats(filter *runtimeapi.ContainerSt
 		Filter: filter,
 	})
 	if err != nil {
-		klog.Errorf("ListContainerStats with filter %+v from runtime service failed: %v", filter, err)
+		glog.Errorf("ListContainerStats with filter %+v from runtime service failed: %v", filter, err)
 		return nil, err
 	}
 
 	return resp.GetStats(), nil
-}
-
-func (r *RemoteRuntimeService) ReopenContainerLog(containerID string) error {
-	ctx, cancel := getContextWithTimeout(r.timeout)
-	defer cancel()
-
-	_, err := r.runtimeClient.ReopenContainerLog(ctx, &runtimeapi.ReopenContainerLogRequest{ContainerId: containerID})
-	if err != nil {
-		klog.Errorf("ReopenContainerLog %q from runtime service failed: %v", containerID, err)
-		return err
-	}
-	return nil
 }

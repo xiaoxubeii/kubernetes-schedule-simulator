@@ -3,18 +3,16 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
 	"io/ioutil"
-	"time"
 
 	"github.com/golang/glog"
 	"github.com/google/uuid"
-	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/scheduler/core"
+	"github.com/xiaoxubeii/kubernetes-schedule-simulator/cmd/cluster-capacity/app/options"
+	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/framework"
+	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/scheduler"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/kubernetes/pkg/features"
-	schedulercache "k8s.io/kubernetes/pkg/scheduler/cache"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
 )
 
 var (
@@ -23,26 +21,48 @@ var (
 	CPU int64 = 1000
 )
 
-func init() {
-	utilfeature.DefaultMutableFeatureGate.Set(fmt.Sprintf("%s=false,%s=false", features.VolumeScheduling, features.TaintNodesByCondition))
-}
-
 func main() {
 	flag.Parse()
 	defer glog.Flush()
+	opts := options.NewClusterCapacityOptions()
+	conf := options.NewClusterCapacityConfig(opts)
+	nodes, pods, _ := createSampleResource()
 
-	// nodes, pods, err := anaCheckPoint()
-	nodes, pods, err := createSampleResource()
+	err := conf.SetDefaultScheduler()
 	if err != nil {
-		glog.Fatalf("fail to get pods or nodes: %v", err)
+		glog.Fatalf("Failed to create default scheduler server: %v ", err)
 	}
-	s := core.NewSimulator(nodes, pods)
 
-	start := time.Now()
-	r, fail := s.Schedule()
-	end := time.Now()
-	glog.Infof("total time: %v\n", end.Sub(start))
-	glog.Infof("success: %v, fail: %v", len(r), len(fail))
+	report, err := runSimulator(conf, pods, nodes)
+	if err != nil {
+		glog.Fatalf("Failed to start scheduler simulator", err)
+	}
+
+	if err := framework.ClusterCapacityReviewPrint(report, true, conf.Options.OutputFormat); err != nil {
+		glog.Fatalf("Error while printing: %v", err)
+	}
+}
+
+func runSimulator(s *options.ClusterCapacityConfig, pods []*v1.Pod, nodes []*v1.Node) (*framework.ClusterCapacityReview, error) {
+	cc, err := scheduler.New(s.DefaultScheduler, pods, nodes)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO (avesh): Enable when support for multiple schedulers is implemented.
+	/*for i := 0; i < len(s.Schedulers); i++ {
+		if err = cc.AddScheduler(s.Schedulers[i]); err != nil {
+			return nil, err
+		}
+	}*/
+
+	err = cc.Run()
+	if err != nil {
+		return nil, err
+	}
+
+	report := cc.Report()
+	return report, nil
 }
 
 func anaCheckPoint() ([]*v1.Node, []*v1.Pod, error) {
@@ -95,8 +115,8 @@ func getNodeCheckPoint() ([]*v1.Node, error) {
 func createSampleResource() ([]*v1.Node, []*v1.Pod, error) {
 	podRes := schedulercache.Resource{MilliCPU: 1 * CPU, Memory: 1 * GB}
 	pods := createSamplePods(100, podRes)
-	nodeRes := schedulercache.Resource{MilliCPU: 64 * CPU, Memory: 64 * GB, AllowedPodNumber: 1000}
-	nodes := createSampleNodes(1, nodeRes)
+	nodeRes := schedulercache.Resource{MilliCPU: 1 * CPU, Memory: 1 * GB, AllowedPodNumber: 1000}
+	nodes := createSampleNodes(99, nodeRes)
 	return nodes, pods, nil
 }
 
@@ -105,6 +125,7 @@ func createSamplePods(podNum int, podRes schedulercache.Resource) []*v1.Pod {
 	for i := 0; i < podNum; i++ {
 		pod := newSamplePod(podRes)
 		pod.UID = types.UID(uuid.New().String())
+		pod.Name = string(pod.UID)
 		pods = append(pods, pod)
 	}
 	return pods

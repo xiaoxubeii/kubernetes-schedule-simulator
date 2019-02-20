@@ -33,7 +33,7 @@ func TestPodLogValidates(t *testing.T) {
 	s, destroyFunc := generic.NewRawStorage(config)
 	defer destroyFunc()
 	store := &genericregistry.Store{
-		Storage: genericregistry.DryRunnableStorage{Storage: s},
+		Storage: s,
 	}
 	logRest := &LogREST{Store: store, KubeletConn: nil}
 

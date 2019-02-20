@@ -18,12 +18,12 @@ package aws
 
 import (
 	"fmt"
+
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"k8s.io/klog"
-
+	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -38,7 +38,6 @@ const TagNameKubernetesClusterPrefix = "kubernetes.io/cluster/"
 // did not allow shared resources.
 const TagNameKubernetesClusterLegacy = "KubernetesCluster"
 
-// ResourceLifecycle is the cluster lifecycle state used in tagging
 type ResourceLifecycle string
 
 const (
@@ -74,9 +73,9 @@ func (t *awsTagging) init(legacyClusterID string, clusterID string) error {
 	t.ClusterID = clusterID
 
 	if clusterID != "" {
-		klog.Infof("AWS cloud filtering on ClusterID: %v", clusterID)
+		glog.Infof("AWS cloud filtering on ClusterID: %v", clusterID)
 	} else {
-		return fmt.Errorf("AWS cloud failed to find ClusterID")
+		glog.Warning("AWS cloud - no clusterID filtering applied for shared resources; do not run multiple clusters in this AZ.")
 	}
 
 	return nil
@@ -92,7 +91,7 @@ func (t *awsTagging) initFromTags(tags []*ec2.Tag) error {
 	}
 
 	if legacyClusterID == "" && newClusterID == "" {
-		klog.Errorf("Tag %q nor %q not found; Kubernetes may behave unexpectedly.", TagNameKubernetesClusterLegacy, TagNameKubernetesClusterPrefix+"...")
+		glog.Errorf("Tag %q nor %q not found; Kubernetes may behave unexpectedly.", TagNameKubernetesClusterLegacy, TagNameKubernetesClusterPrefix+"...")
 	}
 
 	return t.init(legacyClusterID, newClusterID)
@@ -139,10 +138,10 @@ func (t *awsTagging) hasClusterTag(tags []*ec2.Tag) bool {
 	for _, tag := range tags {
 		tagKey := aws.StringValue(tag.Key)
 		// For 1.6, we continue to recognize the legacy tags, for the 1.5 -> 1.6 upgrade
-		// Note that we want to continue traversing tag list if we see a legacy tag with value != ClusterID
-		if (tagKey == TagNameKubernetesClusterLegacy) && (aws.StringValue(tag.Value) == t.ClusterID) {
-			return true
+		if tagKey == TagNameKubernetesClusterLegacy {
+			return aws.StringValue(tag.Value) == t.ClusterID
 		}
+
 		if tagKey == clusterTagKey {
 			return true
 		}
@@ -153,13 +152,13 @@ func (t *awsTagging) hasClusterTag(tags []*ec2.Tag) bool {
 // Ensure that a resource has the correct tags
 // If it has no tags, we assume that this was a problem caused by an error in between creation and tagging,
 // and we add the tags.  If it has a different cluster's tags, that is an error.
-func (t *awsTagging) readRepairClusterTags(client EC2, resourceID string, lifecycle ResourceLifecycle, additionalTags map[string]string, observedTags []*ec2.Tag) error {
+func (c *awsTagging) readRepairClusterTags(client EC2, resourceID string, lifecycle ResourceLifecycle, additionalTags map[string]string, observedTags []*ec2.Tag) error {
 	actualTagMap := make(map[string]string)
 	for _, tag := range observedTags {
 		actualTagMap[aws.StringValue(tag.Key)] = aws.StringValue(tag.Value)
 	}
 
-	expectedTags := t.buildTags(lifecycle, additionalTags)
+	expectedTags := c.buildTags(lifecycle, additionalTags)
 
 	addTags := make(map[string]string)
 	for k, expected := range expectedTags {
@@ -168,7 +167,7 @@ func (t *awsTagging) readRepairClusterTags(client EC2, resourceID string, lifecy
 			continue
 		}
 		if actual == "" {
-			klog.Warningf("Resource %q was missing expected cluster tag %q.  Will add (with value %q)", resourceID, k, expected)
+			glog.Warningf("Resource %q was missing expected cluster tag %q.  Will add (with value %q)", resourceID, k, expected)
 			addTags[k] = expected
 		} else {
 			return fmt.Errorf("resource %q has tag belonging to another cluster: %q=%q (expected %q)", resourceID, k, actual, expected)
@@ -179,7 +178,7 @@ func (t *awsTagging) readRepairClusterTags(client EC2, resourceID string, lifecy
 		return nil
 	}
 
-	if err := t.createTags(client, resourceID, lifecycle, addTags); err != nil {
+	if err := c.createTags(client, resourceID, lifecycle, addTags); err != nil {
 		return fmt.Errorf("error adding missing tags to resource %q: %q", resourceID, err)
 	}
 
@@ -223,7 +222,7 @@ func (t *awsTagging) createTags(client EC2, resourceID string, lifecycle Resourc
 
 		// We could check that the error is retryable, but the error code changes based on what we are tagging
 		// SecurityGroup: InvalidGroup.NotFound
-		klog.V(2).Infof("Failed to create tags; will retry.  Error was %q", err)
+		glog.V(2).Infof("Failed to create tags; will retry.  Error was %q", err)
 		lastErr = err
 		return false, nil
 	})

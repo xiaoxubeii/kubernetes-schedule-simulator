@@ -1,10 +1,5 @@
-approvers:
-- bowei
-- MrHohn
-- thockin
-- matchstick
 reviewers:
-- bowei
+- bowei 
 - MrHohn
 - thockin
 - matchstick

@@ -39,5 +39,3 @@ reviewers:
 - hongchaodeng
 - jszczepkowski
 - enj
-labels:
-- sig/api-machinery

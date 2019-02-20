@@ -17,9 +17,8 @@ limitations under the License.
 package fake
 
 import (
-	"context"
-
-	kubeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	"golang.org/x/net/context"
+	kubeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 )
 
 // ListImages lists existing images.

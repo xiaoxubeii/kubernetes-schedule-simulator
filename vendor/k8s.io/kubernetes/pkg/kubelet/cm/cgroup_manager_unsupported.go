@@ -63,33 +63,23 @@ func (m *unsupportedCgroupManager) Pids(_ CgroupName) []int {
 }
 
 func (m *unsupportedCgroupManager) CgroupName(name string) CgroupName {
-	return CgroupName([]string{})
+	return ""
 }
 
 func (m *unsupportedCgroupManager) ReduceCPULimits(cgroupName CgroupName) error {
 	return nil
 }
 
-var RootCgroupName = CgroupName([]string{})
-
-func NewCgroupName(base CgroupName, components ...string) CgroupName {
-	return CgroupName(append(base, components...))
+func ConvertCgroupFsNameToSystemd(cgroupfsName string) (string, error) {
+	return "", nil
 }
 
-func (cgroupName CgroupName) ToSystemd() string {
+func ConvertCgroupNameToSystemd(cgroupName CgroupName, outputToCgroupFs bool) string {
 	return ""
 }
 
-func ParseSystemdToCgroupName(name string) CgroupName {
-	return nil
-}
-
-func (cgroupName CgroupName) ToCgroupfs() string {
+func RevertFromSystemdToCgroupStyleName(name string) string {
 	return ""
-}
-
-func ParseCgroupfsToCgroupName(name string) CgroupName {
-	return nil
 }
 
 func IsSystemdStyleName(name string) bool {

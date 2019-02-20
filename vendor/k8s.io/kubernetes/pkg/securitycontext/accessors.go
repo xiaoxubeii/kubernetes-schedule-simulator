@@ -29,7 +29,6 @@ type PodSecurityContextAccessor interface {
 	HostIPC() bool
 	SELinuxOptions() *api.SELinuxOptions
 	RunAsUser() *int64
-	RunAsGroup() *int64
 	RunAsNonRoot() *bool
 	SupplementalGroups() []int64
 	FSGroup() *int64
@@ -44,7 +43,6 @@ type PodSecurityContextMutator interface {
 	SetHostIPC(bool)
 	SetSELinuxOptions(*api.SELinuxOptions)
 	SetRunAsUser(*int64)
-	SetRunAsGroup(*int64)
 	SetRunAsNonRoot(*bool)
 	SetSupplementalGroups([]int64)
 	SetFSGroup(*int64)
@@ -144,20 +142,6 @@ func (w *podSecurityContextWrapper) SetRunAsUser(v *int64) {
 	w.ensurePodSC()
 	w.podSC.RunAsUser = v
 }
-func (w *podSecurityContextWrapper) RunAsGroup() *int64 {
-	if w.podSC == nil {
-		return nil
-	}
-	return w.podSC.RunAsGroup
-}
-func (w *podSecurityContextWrapper) SetRunAsGroup(v *int64) {
-	if w.podSC == nil && v == nil {
-		return
-	}
-	w.ensurePodSC()
-	w.podSC.RunAsGroup = v
-}
-
 func (w *podSecurityContextWrapper) RunAsNonRoot() *bool {
 	if w.podSC == nil {
 		return nil
@@ -204,10 +188,8 @@ func (w *podSecurityContextWrapper) SetFSGroup(v *int64) {
 type ContainerSecurityContextAccessor interface {
 	Capabilities() *api.Capabilities
 	Privileged() *bool
-	ProcMount() api.ProcMountType
 	SELinuxOptions() *api.SELinuxOptions
 	RunAsUser() *int64
-	RunAsGroup() *int64
 	RunAsNonRoot() *bool
 	ReadOnlyRootFilesystem() *bool
 	AllowPrivilegeEscalation() *bool
@@ -222,7 +204,6 @@ type ContainerSecurityContextMutator interface {
 	SetPrivileged(*bool)
 	SetSELinuxOptions(*api.SELinuxOptions)
 	SetRunAsUser(*int64)
-	SetRunAsGroup(*int64)
 	SetRunAsNonRoot(*bool)
 	SetReadOnlyRootFilesystem(*bool)
 	SetAllowPrivilegeEscalation(*bool)
@@ -276,15 +257,6 @@ func (w *containerSecurityContextWrapper) SetPrivileged(v *bool) {
 	w.ensureContainerSC()
 	w.containerSC.Privileged = v
 }
-func (w *containerSecurityContextWrapper) ProcMount() api.ProcMountType {
-	if w.containerSC == nil {
-		return api.DefaultProcMount
-	}
-	if w.containerSC.ProcMount == nil {
-		return api.DefaultProcMount
-	}
-	return *w.containerSC.ProcMount
-}
 func (w *containerSecurityContextWrapper) SELinuxOptions() *api.SELinuxOptions {
 	if w.containerSC == nil {
 		return nil
@@ -311,20 +283,6 @@ func (w *containerSecurityContextWrapper) SetRunAsUser(v *int64) {
 	w.ensureContainerSC()
 	w.containerSC.RunAsUser = v
 }
-func (w *containerSecurityContextWrapper) RunAsGroup() *int64 {
-	if w.containerSC == nil {
-		return nil
-	}
-	return w.containerSC.RunAsGroup
-}
-func (w *containerSecurityContextWrapper) SetRunAsGroup(v *int64) {
-	if w.containerSC == nil && v == nil {
-		return
-	}
-	w.ensureContainerSC()
-	w.containerSC.RunAsGroup = v
-}
-
 func (w *containerSecurityContextWrapper) RunAsNonRoot() *bool {
 	if w.containerSC == nil {
 		return nil
@@ -398,9 +356,6 @@ func (w *effectiveContainerSecurityContextWrapper) SetPrivileged(v *bool) {
 		w.containerSC.SetPrivileged(v)
 	}
 }
-func (w *effectiveContainerSecurityContextWrapper) ProcMount() api.ProcMountType {
-	return w.containerSC.ProcMount()
-}
 func (w *effectiveContainerSecurityContextWrapper) SELinuxOptions() *api.SELinuxOptions {
 	if v := w.containerSC.SELinuxOptions(); v != nil {
 		return v
@@ -423,18 +378,6 @@ func (w *effectiveContainerSecurityContextWrapper) SetRunAsUser(v *int64) {
 		w.containerSC.SetRunAsUser(v)
 	}
 }
-func (w *effectiveContainerSecurityContextWrapper) RunAsGroup() *int64 {
-	if v := w.containerSC.RunAsGroup(); v != nil {
-		return v
-	}
-	return w.podSC.RunAsGroup()
-}
-func (w *effectiveContainerSecurityContextWrapper) SetRunAsGroup(v *int64) {
-	if !reflect.DeepEqual(w.RunAsGroup(), v) {
-		w.containerSC.SetRunAsGroup(v)
-	}
-}
-
 func (w *effectiveContainerSecurityContextWrapper) RunAsNonRoot() *bool {
 	if v := w.containerSC.RunAsNonRoot(); v != nil {
 		return v

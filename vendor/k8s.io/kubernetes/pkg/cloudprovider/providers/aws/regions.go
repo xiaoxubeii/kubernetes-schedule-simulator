@@ -17,21 +17,18 @@ limitations under the License.
 package aws
 
 import (
-	"sync"
-
-	"k8s.io/klog"
-
+	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/util/sets"
 	awscredentialprovider "k8s.io/kubernetes/pkg/credentialprovider/aws"
+	"sync"
 )
 
-// wellKnownRegions is the complete list of regions known to the AWS cloudprovider
+// WellKnownRegions is the complete list of regions known to the AWS cloudprovider
 // and credentialprovider.
-var wellKnownRegions = [...]string{
+var WellKnownRegions = [...]string{
 	// from `aws ec2 describe-regions --region us-east-1 --query Regions[].RegionName | sort`
 	"ap-northeast-1",
 	"ap-northeast-2",
-	"ap-northeast-3",
 	"ap-south-1",
 	"ap-southeast-1",
 	"ap-southeast-2",
@@ -39,7 +36,6 @@ var wellKnownRegions = [...]string{
 	"eu-central-1",
 	"eu-west-1",
 	"eu-west-2",
-	"eu-west-3",
 	"sa-east-1",
 	"us-east-1",
 	"us-east-2",
@@ -48,7 +44,6 @@ var wellKnownRegions = [...]string{
 
 	// these are not registered in many / most accounts
 	"cn-north-1",
-	"cn-northwest-1",
 	"us-gov-west-1",
 }
 
@@ -58,12 +53,12 @@ var awsRegionsMutex sync.Mutex
 // awsRegions is a set of recognized regions
 var awsRegions sets.String
 
-// recognizeRegion is called for each AWS region we know about.
+// RecognizeRegion is called for each AWS region we know about.
 // It currently registers a credential provider for that region.
 // There are two paths to discovering a region:
 //  * we hard-code some well-known regions
 //  * if a region is discovered from instance metadata, we add that
-func recognizeRegion(region string) {
+func RecognizeRegion(region string) {
 	awsRegionsMutex.Lock()
 	defer awsRegionsMutex.Unlock()
 
@@ -72,21 +67,21 @@ func recognizeRegion(region string) {
 	}
 
 	if awsRegions.Has(region) {
-		klog.V(6).Infof("found AWS region %q again - ignoring", region)
+		glog.V(6).Infof("found AWS region %q again - ignoring", region)
 		return
 	}
 
-	klog.V(4).Infof("found AWS region %q", region)
+	glog.V(4).Infof("found AWS region %q", region)
 
 	awscredentialprovider.RegisterCredentialsProvider(region)
 
 	awsRegions.Insert(region)
 }
 
-// recognizeWellKnownRegions calls RecognizeRegion on each WellKnownRegion
-func recognizeWellKnownRegions() {
-	for _, region := range wellKnownRegions {
-		recognizeRegion(region)
+// RecognizeWellKnownRegions calls RecognizeRegion on each WellKnownRegion
+func RecognizeWellKnownRegions() {
+	for _, region := range WellKnownRegions {
+		RecognizeRegion(region)
 	}
 }
 

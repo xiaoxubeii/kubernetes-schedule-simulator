@@ -24,7 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 // Map to PodVolumeStats pointers since the addresses for map values are not constant and can cause pain
@@ -60,10 +60,10 @@ func newFsResourceAnalyzer(statsProvider StatsProvider, calcVolumePeriod time.Du
 func (s *fsResourceAnalyzer) Start() {
 	s.startOnce.Do(func() {
 		if s.calcPeriod <= 0 {
-			klog.Info("Volume stats collection disabled.")
+			glog.Info("Volume stats collection disabled.")
 			return
 		}
-		klog.Info("Starting FS ResourceAnalyzer")
+		glog.Info("Starting FS ResourceAnalyzer")
 		go wait.Forever(func() { s.updateCachedPodVolumeStats() }, s.calcPeriod)
 	})
 }

@@ -44,7 +44,7 @@ func TestConfigz(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if string(body) != `{"testing":"blah"}` {
-		t.Fatalf("unexpected output: %s", body)
+		t.Fatalf("unexpected output: %v", err)
 	}
 
 	v.Set("bing")
@@ -58,7 +58,7 @@ func TestConfigz(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if string(body) != `{"testing":"bing"}` {
-		t.Fatalf("unexpected output: %s", body)
+		t.Fatalf("unexpected output: %v", err)
 	}
 
 	Delete("testing")
@@ -72,9 +72,6 @@ func TestConfigz(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if string(body) != `{}` {
-		t.Fatalf("unexpected output: %s", body)
-	}
-	if resp.Header.Get("Content-Type") != "application/json" {
-		t.Fatalf("unexpected Content-Type: %s", resp.Header.Get("Content-Type"))
+		t.Fatalf("unexpected output: %v", err)
 	}
 }

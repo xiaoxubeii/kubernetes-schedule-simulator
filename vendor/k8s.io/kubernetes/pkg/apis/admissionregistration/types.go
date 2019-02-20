@@ -106,26 +106,12 @@ type Rule struct {
 type FailurePolicyType string
 
 const (
-	// Ignore means that an error calling the webhook is ignored.
+	// Ignore means the initializer is removed from the initializers list of an
+	// object if the initializer is timed out.
 	Ignore FailurePolicyType = "Ignore"
-	// Fail means that an error calling the webhook causes the admission to fail.
+	// For 1.7, only "Ignore" is allowed. "Fail" will be allowed when the
+	// extensible admission feature is beta.
 	Fail FailurePolicyType = "Fail"
-)
-
-type SideEffectClass string
-
-const (
-	// SideEffectClassUnknown means that no information is known about the side effects of calling the webhook.
-	// If a request with the dry-run attribute would trigger a call to this webhook, the request will instead fail.
-	SideEffectClassUnknown SideEffectClass = "Unknown"
-	// SideEffectClassNone means that calling the webhook will have no side effects.
-	SideEffectClassNone SideEffectClass = "None"
-	// SideEffectClassSome means that calling the webhook will possibly have side effects.
-	// If a request with the dry-run attribute would trigger a call to this webhook, the request will instead fail.
-	SideEffectClassSome SideEffectClass = "Some"
-	// SideEffectClassNoneOnDryRun means that calling the webhook will possibly have side effects, but if the
-	// request being reviewed has the dry-run attribute, the side effects will be suppressed.
-	SideEffectClassNoneOnDryRun SideEffectClass = "NoneOnDryRun"
 )
 
 // +genclient
@@ -209,8 +195,8 @@ type Webhook struct {
 	// NamespaceSelector decides whether to run the webhook on an object based
 	// on whether the namespace for that object matches the selector. If the
 	// object itself is a namespace, the matching is performed on
-	// object.metadata.labels. If the object is another cluster scoped resource,
-	// it never skips the webhook.
+	// object.metadata.labels. If the object is other cluster scoped resource,
+	// it is not subjected to the webhook.
 	//
 	// For example, to run the webhook on any objects whose namespace is not
 	// associated with "runlevel" of "0" or "1";  you will set the selector as
@@ -251,15 +237,6 @@ type Webhook struct {
 	// Default to the empty LabelSelector, which matches everything.
 	// +optional
 	NamespaceSelector *metav1.LabelSelector
-
-	// SideEffects states whether this webhookk has side effects.
-	// Acceptable values are: Unknown, None, Some, NoneOnDryRun
-	// Webhooks with side effects MUST implement a reconciliation system, since a request may be
-	// rejected by a future step in the admission change and the side effects therefore need to be undone.
-	// Requests with the dryRun attribute will be auto-rejected if they match a webhook with
-	// sideEffects == Unknown or Some. Defaults to Unknown.
-	// +optional
-	SideEffects *SideEffectClass
 }
 
 // RuleWithOperations is a tuple of Operations and Resources. It is recommended to make
@@ -290,7 +267,7 @@ const (
 // connection with the webhook
 type WebhookClientConfig struct {
 	// `url` gives the location of the webhook, in standard URL form
-	// (`scheme://host:port/path`). Exactly one of `url` or `service`
+	// (`[scheme://]host:port/path`). Exactly one of `url` or `service`
 	// must be specified.
 	//
 	// The `host` should not refer to a service running in the cluster; use
@@ -323,14 +300,16 @@ type WebhookClientConfig struct {
 	//
 	// If the webhook is running within the cluster, then you should use `service`.
 	//
-	// Port 443 will be used if it is open, otherwise it is an error.
+	// If there is only one port open for the service, that port will be
+	// used. If there are multiple ports open, port 443 will be used if it
+	// is open, otherwise it is an error.
 	//
 	// +optional
 	Service *ServiceReference
 
-	// `caBundle` is a PEM encoded CA bundle which will be used to validate the webhook's server certificate.
-	// If unspecified, system trust roots on the apiserver are used.
-	// +optional
+	// `caBundle` is a PEM encoded CA bundle which will be used to validate
+	// the webhook's server certificate.
+	// Required.
 	CABundle []byte
 }
 

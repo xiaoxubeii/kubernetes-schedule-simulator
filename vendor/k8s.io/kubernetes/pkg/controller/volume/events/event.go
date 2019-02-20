@@ -30,5 +30,4 @@ const (
 	ProvisioningCleanupFailed = "ProvisioningCleanupFailed"
 	ProvisioningSucceeded     = "ProvisioningSucceeded"
 	WaitForFirstConsumer      = "WaitForFirstConsumer"
-	ExternalExpanding         = "ExternalExpanding"
 )

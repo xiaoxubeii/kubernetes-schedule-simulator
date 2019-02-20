@@ -24,7 +24,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 	"k8s.io/kubernetes/pkg/kubelet/metrics"
 )
 
@@ -38,7 +38,7 @@ func TestRecordOperation(t *testing.T) {
 	assert.NoError(t, err)
 	defer l.Close()
 
-	prometheusURL := "http://" + temporalServer + "/metrics"
+	prometheusUrl := "http://" + temporalServer + "/metrics"
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", prometheus.Handler())
 	server := &http.Server{
@@ -55,11 +55,11 @@ func TestRecordOperation(t *testing.T) {
 
 	assert.HTTPBodyContains(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, r)
-	}), "GET", prometheusURL, nil, runtimeOperationsCounterExpected)
+	}), "GET", prometheusUrl, nil, runtimeOperationsCounterExpected)
 
 	assert.HTTPBodyContains(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, r)
-	}), "GET", prometheusURL, nil, runtimeOperationsLatencyExpected)
+	}), "GET", prometheusUrl, nil, runtimeOperationsLatencyExpected)
 }
 
 func TestInstrumentedVersion(t *testing.T) {

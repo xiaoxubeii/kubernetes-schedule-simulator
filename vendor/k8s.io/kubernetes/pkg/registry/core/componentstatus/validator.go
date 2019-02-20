@@ -45,7 +45,7 @@ type Server struct {
 	EnableHTTPS bool
 	TLSConfig   *tls.Config
 	Validate    ValidatorFn
-	Prober      httpprober.Prober
+	Prober      httpprober.HTTPProber
 	Once        sync.Once
 }
 

@@ -9,6 +9,7 @@ reviewers:
 - sttts
 - saad-ali
 - ncdc
+- timothysc
 - soltysh
 - dims
 - errordeveloper
@@ -16,5 +17,3 @@ reviewers:
 - mbohlool
 - david-mcmahon
 - jianhuiz
-labels:
-- sig/apps

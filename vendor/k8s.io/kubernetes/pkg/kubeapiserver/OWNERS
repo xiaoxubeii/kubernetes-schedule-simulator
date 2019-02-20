@@ -8,6 +8,3 @@ reviewers:
 - lavalamp
 - liggitt
 - sttts
-labels:
-- sig/api-machinery
-- area/apiserver

@@ -17,15 +17,13 @@ limitations under the License.
 package gce
 
 import (
-	"context"
+	"fmt"
 	"strings"
 
 	compute "google.golang.org/api/compute/v1"
 
 	"k8s.io/apimachinery/pkg/types"
-	cloudprovider "k8s.io/cloud-provider"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud"
-	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/filter"
+	"k8s.io/kubernetes/pkg/cloudprovider"
 )
 
 func newZonesMetricContext(request, region string) *metricContext {
@@ -33,17 +31,17 @@ func newZonesMetricContext(request, region string) *metricContext {
 }
 
 // GetZone creates a cloudprovider.Zone of the current zone and region
-func (g *Cloud) GetZone(ctx context.Context) (cloudprovider.Zone, error) {
+func (gce *GCECloud) GetZone() (cloudprovider.Zone, error) {
 	return cloudprovider.Zone{
-		FailureDomain: g.localZone,
-		Region:        g.region,
+		FailureDomain: gce.localZone,
+		Region:        gce.region,
 	}, nil
 }
 
 // GetZoneByProviderID implements Zones.GetZoneByProviderID
 // This is particularly useful in external cloud providers where the kubelet
 // does not initialize node data.
-func (g *Cloud) GetZoneByProviderID(ctx context.Context, providerID string) (cloudprovider.Zone, error) {
+func (gce *GCECloud) GetZoneByProviderID(providerID string) (cloudprovider.Zone, error) {
 	_, zone, _, err := splitProviderID(providerID)
 	if err != nil {
 		return cloudprovider.Zone{}, err
@@ -58,9 +56,9 @@ func (g *Cloud) GetZoneByProviderID(ctx context.Context, providerID string) (clo
 // GetZoneByNodeName implements Zones.GetZoneByNodeName
 // This is particularly useful in external cloud providers where the kubelet
 // does not initialize node data.
-func (g *Cloud) GetZoneByNodeName(ctx context.Context, nodeName types.NodeName) (cloudprovider.Zone, error) {
+func (gce *GCECloud) GetZoneByNodeName(nodeName types.NodeName) (cloudprovider.Zone, error) {
 	instanceName := mapNodeNameToInstanceName(nodeName)
-	instance, err := g.getInstanceByName(instanceName)
+	instance, err := gce.getInstanceByName(instanceName)
 	if err != nil {
 		return cloudprovider.Zone{}, err
 	}
@@ -72,18 +70,16 @@ func (g *Cloud) GetZoneByNodeName(ctx context.Context, nodeName types.NodeName) 
 }
 
 // ListZonesInRegion returns all zones in a GCP region
-func (g *Cloud) ListZonesInRegion(region string) ([]*compute.Zone, error) {
-	ctx, cancel := cloud.ContextWithCallTimeout()
-	defer cancel()
-
+func (gce *GCECloud) ListZonesInRegion(region string) ([]*compute.Zone, error) {
 	mc := newZonesMetricContext("list", region)
-	list, err := g.c.Zones().List(ctx, filter.Regexp("region", g.getRegionLink(region)))
+	filter := fmt.Sprintf("region eq %v", gce.getRegionLink(region))
+	list, err := gce.service.Zones.List(gce.projectID).Filter(filter).Do()
 	if err != nil {
 		return nil, mc.Observe(err)
 	}
-	return list, mc.Observe(err)
+	return list.Items, mc.Observe(err)
 }
 
-func (g *Cloud) getRegionLink(region string) string {
-	return g.service.BasePath + strings.Join([]string{g.projectID, "regions", region}, "/")
+func (gce *GCECloud) getRegionLink(region string) string {
+	return gce.service.BasePath + strings.Join([]string{gce.projectID, "regions", region}, "/")
 }

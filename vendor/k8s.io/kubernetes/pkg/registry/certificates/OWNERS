@@ -1,7 +1,11 @@
-approvers:
-- sig-auth-certificates-approvers
 reviewers:
-- sig-auth-certificates-reviewers
-labels:
-- sig/auth
-
+- smarterclayton
+- wojtek-t
+- deads2k
+- mikedanese
+- liggitt
+- timothysc
+- dims
+- hongchaodeng
+- david-mcmahon
+- enj

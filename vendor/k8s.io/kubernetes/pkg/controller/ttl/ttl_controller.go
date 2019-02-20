@@ -47,7 +47,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/kubernetes/pkg/controller"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 type TTLController struct {
@@ -113,8 +113,8 @@ func (ttlc *TTLController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer ttlc.queue.ShutDown()
 
-	klog.Infof("Starting TTL controller")
-	defer klog.Infof("Shutting down TTL controller")
+	glog.Infof("Starting TTL controller")
+	defer glog.Infof("Shutting down TTL controller")
 
 	if !controller.WaitForCacheSync("TTL", stopCh, ttlc.hasSynced) {
 		return
@@ -190,7 +190,7 @@ func (ttlc *TTLController) deleteNode(obj interface{}) {
 func (ttlc *TTLController) enqueueNode(node *v1.Node) {
 	key, err := controller.KeyFunc(node)
 	if err != nil {
-		klog.Errorf("Couldn't get key for object %+v", node)
+		glog.Errorf("Couldn't get key for object %+v", node)
 		return
 	}
 	ttlc.queue.Add(key)
@@ -235,7 +235,7 @@ func getIntFromAnnotation(node *v1.Node, annotationKey string) (int, bool) {
 	}
 	intValue, err := strconv.Atoi(annotationValue)
 	if err != nil {
-		klog.Warningf("Cannot convert the value %q with annotation key %q for the node %q",
+		glog.Warningf("Cannot convert the value %q with annotation key %q for the node %q",
 			annotationValue, annotationKey, node.Name)
 		return 0, false
 	}
@@ -265,10 +265,10 @@ func (ttlc *TTLController) patchNodeWithAnnotation(node *v1.Node, annotationKey 
 	}
 	_, err = ttlc.kubeClient.CoreV1().Nodes().Patch(node.Name, types.StrategicMergePatchType, patchBytes)
 	if err != nil {
-		klog.V(2).Infof("Failed to change ttl annotation for node %s: %v", node.Name, err)
+		glog.V(2).Infof("Failed to change ttl annotation for node %s: %v", node.Name, err)
 		return err
 	}
-	klog.V(2).Infof("Changed ttl annotation for node %s to %d seconds", node.Name, value)
+	glog.V(2).Infof("Changed ttl annotation for node %s to %d seconds", node.Name, value)
 	return nil
 }
 

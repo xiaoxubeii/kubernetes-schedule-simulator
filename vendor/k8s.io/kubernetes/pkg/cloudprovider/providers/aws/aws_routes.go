@@ -17,14 +17,12 @@ limitations under the License.
 package aws
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"k8s.io/klog"
-
-	cloudprovider "k8s.io/cloud-provider"
+	"github.com/golang/glog"
+	"k8s.io/kubernetes/pkg/cloudprovider"
 )
 
 func (c *Cloud) findRouteTable(clusterName string) (*ec2.RouteTable, error) {
@@ -67,7 +65,7 @@ func (c *Cloud) findRouteTable(clusterName string) (*ec2.RouteTable, error) {
 
 // ListRoutes implements Routes.ListRoutes
 // List all routes that match the filter
-func (c *Cloud) ListRoutes(ctx context.Context, clusterName string) ([]*cloudprovider.Route, error) {
+func (c *Cloud) ListRoutes(clusterName string) ([]*cloudprovider.Route, error) {
 	table, err := c.findRouteTable(clusterName)
 	if err != nil {
 		return nil, err
@@ -117,7 +115,7 @@ func (c *Cloud) ListRoutes(ctx context.Context, clusterName string) ([]*cloudpro
 				route.TargetNode = mapInstanceToNodeName(instance)
 				routes = append(routes, route)
 			} else {
-				klog.Warningf("unable to find instance ID %s in the list of instances being routed to", instanceID)
+				glog.Warningf("unable to find instance ID %s in the list of instances being routed to", instanceID)
 			}
 		}
 	}
@@ -140,7 +138,7 @@ func (c *Cloud) configureInstanceSourceDestCheck(instanceID string, sourceDestCh
 
 // CreateRoute implements Routes.CreateRoute
 // Create the described route
-func (c *Cloud) CreateRoute(ctx context.Context, clusterName string, nameHint string, route *cloudprovider.Route) error {
+func (c *Cloud) CreateRoute(clusterName string, nameHint string, route *cloudprovider.Route) error {
 	instance, err := c.getInstanceByNodeName(route.TargetNode)
 	if err != nil {
 		return err
@@ -172,7 +170,7 @@ func (c *Cloud) CreateRoute(ctx context.Context, clusterName string, nameHint st
 	}
 
 	if deleteRoute != nil {
-		klog.Infof("deleting blackholed route: %s", aws.StringValue(deleteRoute.DestinationCidrBlock))
+		glog.Infof("deleting blackholed route: %s", aws.StringValue(deleteRoute.DestinationCidrBlock))
 
 		request := &ec2.DeleteRouteInput{}
 		request.DestinationCidrBlock = deleteRoute.DestinationCidrBlock
@@ -200,7 +198,7 @@ func (c *Cloud) CreateRoute(ctx context.Context, clusterName string, nameHint st
 
 // DeleteRoute implements Routes.DeleteRoute
 // Delete the specified route
-func (c *Cloud) DeleteRoute(ctx context.Context, clusterName string, route *cloudprovider.Route) error {
+func (c *Cloud) DeleteRoute(clusterName string, route *cloudprovider.Route) error {
 	table, err := c.findRouteTable(clusterName)
 	if err != nil {
 		return err

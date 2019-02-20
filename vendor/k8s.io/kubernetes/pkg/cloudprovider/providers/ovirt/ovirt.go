@@ -17,7 +17,6 @@ limitations under the License.
 package ovirt
 
 import (
-	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -33,35 +32,28 @@ import (
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	cloudprovider "k8s.io/cloud-provider"
+	"k8s.io/kubernetes/pkg/cloudprovider"
+	"k8s.io/kubernetes/pkg/controller"
 )
 
-// ProviderName is the name of this cloud provider.
 const ProviderName = "ovirt"
 
-// Instance specifies UUID, name and IP address of the instance.
-type Instance struct {
+type OVirtInstance struct {
 	UUID      string
 	Name      string
 	IPAddress string
 }
 
-// InstanceMap provides the map of Ovirt instances.
-type InstanceMap map[string]Instance
+type OVirtInstanceMap map[string]OVirtInstance
 
-var _ cloudprovider.Interface = (*Cloud)(nil)
-var _ cloudprovider.Instances = (*Cloud)(nil)
-
-// Cloud is an implementation of the cloud provider interface for Ovirt.
-type Cloud struct {
+type OVirtCloud struct {
 	VmsRequest   *url.URL
 	HostsRequest *url.URL
 }
 
-// APIConfig wraps the api settings for the Ovirt.
-type APIConfig struct {
+type OVirtApiConfig struct {
 	Connection struct {
-		APIEntry string `gcfg:"uri"`
+		ApiEntry string `gcfg:"uri"`
 		Username string `gcfg:"username"`
 		Password string `gcfg:"password"`
 	}
@@ -70,24 +62,21 @@ type APIConfig struct {
 	}
 }
 
-// XMLVMAddress is an implementation for the Ovirt instance IP address in xml.
-type XMLVMAddress struct {
+type XmlVmAddress struct {
 	Address string `xml:"address,attr"`
 }
 
-// XMLVMInfo is an implementation for the Ovirt instance details in xml.
-type XMLVMInfo struct {
+type XmlVmInfo struct {
 	UUID      string         `xml:"id,attr"`
 	Name      string         `xml:"name"`
 	Hostname  string         `xml:"guest_info>fqdn"`
-	Addresses []XMLVMAddress `xml:"guest_info>ips>ip"`
+	Addresses []XmlVmAddress `xml:"guest_info>ips>ip"`
 	State     string         `xml:"status>state"`
 }
 
-// XMLVmsList is an implementation to provide the list of Ovirt instances.
-type XMLVmsList struct {
+type XmlVmsList struct {
 	XMLName xml.Name    `xml:"vms"`
-	VM      []XMLVMInfo `xml:"vm"`
+	Vm      []XmlVmInfo `xml:"vm"`
 }
 
 func init() {
@@ -97,12 +86,12 @@ func init() {
 		})
 }
 
-func newOVirtCloud(config io.Reader) (*Cloud, error) {
+func newOVirtCloud(config io.Reader) (*OVirtCloud, error) {
 	if config == nil {
 		return nil, fmt.Errorf("missing configuration file for ovirt cloud provider")
 	}
 
-	oVirtConfig := APIConfig{}
+	oVirtConfig := OVirtApiConfig{}
 
 	/* defaults */
 	oVirtConfig.Connection.Username = "admin@internal"
@@ -111,11 +100,11 @@ func newOVirtCloud(config io.Reader) (*Cloud, error) {
 		return nil, err
 	}
 
-	if oVirtConfig.Connection.APIEntry == "" {
+	if oVirtConfig.Connection.ApiEntry == "" {
 		return nil, fmt.Errorf("missing ovirt uri in cloud provider configuration")
 	}
 
-	request, err := url.Parse(oVirtConfig.Connection.APIEntry)
+	request, err := url.Parse(oVirtConfig.Connection.ApiEntry)
 	if err != nil {
 		return nil, err
 	}
@@ -124,50 +113,53 @@ func newOVirtCloud(config io.Reader) (*Cloud, error) {
 	request.User = url.UserPassword(oVirtConfig.Connection.Username, oVirtConfig.Connection.Password)
 	request.RawQuery = url.Values{"search": {oVirtConfig.Filters.VmsQuery}}.Encode()
 
-	return &Cloud{VmsRequest: request}, nil
+	return &OVirtCloud{VmsRequest: request}, nil
 }
 
 // Initialize passes a Kubernetes clientBuilder interface to the cloud provider
-func (v *Cloud) Initialize(clientBuilder cloudprovider.ControllerClientBuilder, stop <-chan struct{}) {
-}
+func (v *OVirtCloud) Initialize(clientBuilder controller.ControllerClientBuilder) {}
 
-// Clusters returns the list of clusters.
-func (v *Cloud) Clusters() (cloudprovider.Clusters, bool) {
+func (v *OVirtCloud) Clusters() (cloudprovider.Clusters, bool) {
 	return nil, false
 }
 
 // ProviderName returns the cloud provider ID.
-func (v *Cloud) ProviderName() string {
+func (v *OVirtCloud) ProviderName() string {
 	return ProviderName
 }
 
+// ScrubDNS filters DNS settings for pods.
+func (v *OVirtCloud) ScrubDNS(nameservers, searches []string) (nsOut, srchOut []string) {
+	return nameservers, searches
+}
+
 // HasClusterID returns true if the cluster has a clusterID
-func (v *Cloud) HasClusterID() bool {
+func (v *OVirtCloud) HasClusterID() bool {
 	return true
 }
 
 // LoadBalancer returns an implementation of LoadBalancer for oVirt cloud
-func (v *Cloud) LoadBalancer() (cloudprovider.LoadBalancer, bool) {
+func (v *OVirtCloud) LoadBalancer() (cloudprovider.LoadBalancer, bool) {
 	return nil, false
 }
 
 // Instances returns an implementation of Instances for oVirt cloud
-func (v *Cloud) Instances() (cloudprovider.Instances, bool) {
+func (v *OVirtCloud) Instances() (cloudprovider.Instances, bool) {
 	return v, true
 }
 
 // Zones returns an implementation of Zones for oVirt cloud
-func (v *Cloud) Zones() (cloudprovider.Zones, bool) {
+func (v *OVirtCloud) Zones() (cloudprovider.Zones, bool) {
 	return nil, false
 }
 
 // Routes returns an implementation of Routes for oVirt cloud
-func (v *Cloud) Routes() (cloudprovider.Routes, bool) {
+func (v *OVirtCloud) Routes() (cloudprovider.Routes, bool) {
 	return nil, false
 }
 
 // NodeAddresses returns the NodeAddresses of the instance with the specified nodeName.
-func (v *Cloud) NodeAddresses(ctx context.Context, nodeName types.NodeName) ([]v1.NodeAddress, error) {
+func (v *OVirtCloud) NodeAddresses(nodeName types.NodeName) ([]v1.NodeAddress, error) {
 	name := mapNodeNameToInstanceName(nodeName)
 	instance, err := v.fetchInstance(name)
 	if err != nil {
@@ -198,7 +190,7 @@ func (v *Cloud) NodeAddresses(ctx context.Context, nodeName types.NodeName) ([]v
 // NodeAddressesByProviderID returns the node addresses of an instances with the specified unique providerID
 // This method will not be called from the node that is requesting this ID. i.e. metadata service
 // and other local methods cannot be used here
-func (v *Cloud) NodeAddressesByProviderID(ctx context.Context, providerID string) ([]v1.NodeAddress, error) {
+func (v *OVirtCloud) NodeAddressesByProviderID(providerID string) ([]v1.NodeAddress, error) {
 	return []v1.NodeAddress{}, cloudprovider.NotImplemented
 }
 
@@ -208,19 +200,24 @@ func mapNodeNameToInstanceName(nodeName types.NodeName) string {
 	return string(nodeName)
 }
 
-// InstanceExistsByProviderID returns true if the instance with the given provider id still exists and is running.
-// If false is returned with no error, the instance will be immediately deleted by the cloud controller manager.
-func (v *Cloud) InstanceExistsByProviderID(ctx context.Context, providerID string) (bool, error) {
-	return false, cloudprovider.NotImplemented
+// ExternalID returns the cloud provider ID of the specified node with the specified NodeName (deprecated).
+func (v *OVirtCloud) ExternalID(nodeName types.NodeName) (string, error) {
+	name := mapNodeNameToInstanceName(nodeName)
+	instance, err := v.fetchInstance(name)
+	if err != nil {
+		return "", err
+	}
+	return instance.UUID, nil
 }
 
-// InstanceShutdownByProviderID returns true if the instance is in safe state to detach volumes
-func (v *Cloud) InstanceShutdownByProviderID(ctx context.Context, providerID string) (bool, error) {
+// InstanceExistsByProviderID returns true if the instance with the given provider id still exists and is running.
+// If false is returned with no error, the instance will be immediately deleted by the cloud controller manager.
+func (v *OVirtCloud) InstanceExistsByProviderID(providerID string) (bool, error) {
 	return false, cloudprovider.NotImplemented
 }
 
 // InstanceID returns the cloud provider ID of the node with the specified NodeName.
-func (v *Cloud) InstanceID(ctx context.Context, nodeName types.NodeName) (string, error) {
+func (v *OVirtCloud) InstanceID(nodeName types.NodeName) (string, error) {
 	name := mapNodeNameToInstanceName(nodeName)
 	instance, err := v.fetchInstance(name)
 	if err != nil {
@@ -234,16 +231,16 @@ func (v *Cloud) InstanceID(ctx context.Context, nodeName types.NodeName) (string
 // InstanceTypeByProviderID returns the cloudprovider instance type of the node with the specified unique providerID
 // This method will not be called from the node that is requesting this ID. i.e. metadata service
 // and other local methods cannot be used here
-func (v *Cloud) InstanceTypeByProviderID(ctx context.Context, providerID string) (string, error) {
+func (v *OVirtCloud) InstanceTypeByProviderID(providerID string) (string, error) {
 	return "", cloudprovider.NotImplemented
 }
 
 // InstanceType returns the type of the specified instance.
-func (v *Cloud) InstanceType(ctx context.Context, name types.NodeName) (string, error) {
+func (v *OVirtCloud) InstanceType(name types.NodeName) (string, error) {
 	return "", nil
 }
 
-func getInstancesFromXML(body io.Reader) (InstanceMap, error) {
+func getInstancesFromXml(body io.Reader) (OVirtInstanceMap, error) {
 	if body == nil {
 		return nil, fmt.Errorf("ovirt rest-api response body is missing")
 	}
@@ -253,15 +250,15 @@ func getInstancesFromXML(body io.Reader) (InstanceMap, error) {
 		return nil, err
 	}
 
-	vmlist := XMLVmsList{}
+	vmlist := XmlVmsList{}
 
 	if err := xml.Unmarshal(content, &vmlist); err != nil {
 		return nil, err
 	}
 
-	instances := make(InstanceMap)
+	instances := make(OVirtInstanceMap)
 
-	for _, vm := range vmlist.VM {
+	for _, vm := range vmlist.Vm {
 		// Always return only vms that are up and running
 		if vm.Hostname != "" && strings.ToLower(vm.State) == "up" {
 			address := ""
@@ -269,7 +266,7 @@ func getInstancesFromXML(body io.Reader) (InstanceMap, error) {
 				address = vm.Addresses[0].Address
 			}
 
-			instances[vm.Hostname] = Instance{
+			instances[vm.Hostname] = OVirtInstance{
 				UUID:      vm.UUID,
 				Name:      vm.Name,
 				IPAddress: address,
@@ -280,7 +277,7 @@ func getInstancesFromXML(body io.Reader) (InstanceMap, error) {
 	return instances, nil
 }
 
-func (v *Cloud) fetchAllInstances() (InstanceMap, error) {
+func (v *OVirtCloud) fetchAllInstances() (OVirtInstanceMap, error) {
 	response, err := http.Get(v.VmsRequest.String())
 	if err != nil {
 		return nil, err
@@ -288,10 +285,10 @@ func (v *Cloud) fetchAllInstances() (InstanceMap, error) {
 
 	defer response.Body.Close()
 
-	return getInstancesFromXML(response.Body)
+	return getInstancesFromXml(response.Body)
 }
 
-func (v *Cloud) fetchInstance(name string) (*Instance, error) {
+func (v *OVirtCloud) fetchInstance(name string) (*OVirtInstance, error) {
 	allInstances, err := v.fetchAllInstances()
 	if err != nil {
 		return nil, err
@@ -305,8 +302,7 @@ func (v *Cloud) fetchInstance(name string) (*Instance, error) {
 	return &instance, nil
 }
 
-// ListSortedNames returns the list of sorted Ovirt instances name.
-func (m *InstanceMap) ListSortedNames() []string {
+func (m *OVirtInstanceMap) ListSortedNames() []string {
 	var names []string
 
 	for k := range *m {
@@ -318,12 +314,11 @@ func (m *InstanceMap) ListSortedNames() []string {
 	return names
 }
 
-// CurrentNodeName is implementation of Instances.CurrentNodeName.
-func (v *Cloud) CurrentNodeName(ctx context.Context, hostname string) (types.NodeName, error) {
+// Implementation of Instances.CurrentNodeName
+func (v *OVirtCloud) CurrentNodeName(hostname string) (types.NodeName, error) {
 	return types.NodeName(hostname), nil
 }
 
-// AddSSHKeyToAllInstances is currently not implemented.
-func (v *Cloud) AddSSHKeyToAllInstances(ctx context.Context, user string, keyData []byte) error {
+func (v *OVirtCloud) AddSSHKeyToAllInstances(user string, keyData []byte) error {
 	return cloudprovider.NotImplemented
 }

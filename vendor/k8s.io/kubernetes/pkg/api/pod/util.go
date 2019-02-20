@@ -58,10 +58,6 @@ func VisitPodSecretNames(pod *api.Pod, visitor Visitor) bool {
 			if source.CephFS.SecretRef != nil && !visitor(source.CephFS.SecretRef.Name) {
 				return false
 			}
-		case source.Cinder != nil:
-			if source.Cinder.SecretRef != nil && !visitor(source.Cinder.SecretRef.Name) {
-				return false
-			}
 		case source.FlexVolume != nil:
 			if source.FlexVolume.SecretRef != nil && !visitor(source.FlexVolume.SecretRef.Name) {
 				return false
@@ -176,7 +172,7 @@ func IsPodReady(pod *api.Pod) bool {
 	return IsPodReadyConditionTrue(pod.Status)
 }
 
-// IsPodReadyConditionTrue returns true if a pod is ready; false otherwise.
+// IsPodReadyConditionTrue retruns true if a pod is ready; false otherwise.
 func IsPodReadyConditionTrue(status api.PodStatus) bool {
 	condition := GetPodReadyCondition(status)
 	return condition != nil && condition.Status == api.ConditionTrue
@@ -248,51 +244,22 @@ func DropDisabledAlphaFields(podSpec *api.PodSpec) {
 		}
 	}
 
+	for i := range podSpec.Containers {
+		DropDisabledVolumeMountsAlphaFields(podSpec.Containers[i].VolumeMounts)
+	}
+	for i := range podSpec.InitContainers {
+		DropDisabledVolumeMountsAlphaFields(podSpec.InitContainers[i].VolumeMounts)
+	}
+
 	DropDisabledVolumeDevicesAlphaFields(podSpec)
-
-	DropDisabledRunAsGroupField(podSpec)
-
-	if !utilfeature.DefaultFeatureGate.Enabled(features.RuntimeClass) && podSpec.RuntimeClassName != nil {
-		podSpec.RuntimeClassName = nil
-	}
-
-	DropDisabledProcMountField(podSpec)
 }
 
-// DropDisabledRunAsGroupField removes disabled fields from PodSpec related
-// to RunAsGroup
-func DropDisabledRunAsGroupField(podSpec *api.PodSpec) {
-	if !utilfeature.DefaultFeatureGate.Enabled(features.RunAsGroup) {
-		if podSpec.SecurityContext != nil {
-			podSpec.SecurityContext.RunAsGroup = nil
-		}
-		for i := range podSpec.Containers {
-			if podSpec.Containers[i].SecurityContext != nil {
-				podSpec.Containers[i].SecurityContext.RunAsGroup = nil
-			}
-		}
-		for i := range podSpec.InitContainers {
-			if podSpec.InitContainers[i].SecurityContext != nil {
-				podSpec.InitContainers[i].SecurityContext.RunAsGroup = nil
-			}
-		}
-	}
-}
-
-// DropDisabledProcMountField removes disabled fields from PodSpec related
-// to ProcMount
-func DropDisabledProcMountField(podSpec *api.PodSpec) {
-	if !utilfeature.DefaultFeatureGate.Enabled(features.ProcMountType) {
-		defProcMount := api.DefaultProcMount
-		for i := range podSpec.Containers {
-			if podSpec.Containers[i].SecurityContext != nil {
-				podSpec.Containers[i].SecurityContext.ProcMount = &defProcMount
-			}
-		}
-		for i := range podSpec.InitContainers {
-			if podSpec.InitContainers[i].SecurityContext != nil {
-				podSpec.InitContainers[i].SecurityContext.ProcMount = &defProcMount
-			}
+// DropDisabledVolumeMountsAlphaFields removes disabled fields from []VolumeMount.
+// This should be called from PrepareForCreate/PrepareForUpdate for all resources containing a VolumeMount
+func DropDisabledVolumeMountsAlphaFields(volumeMounts []api.VolumeMount) {
+	if !utilfeature.DefaultFeatureGate.Enabled(features.MountPropagation) {
+		for i := range volumeMounts {
+			volumeMounts[i].MountPropagation = nil
 		}
 	}
 }

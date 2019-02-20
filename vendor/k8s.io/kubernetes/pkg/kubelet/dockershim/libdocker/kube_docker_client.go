@@ -18,7 +18,6 @@ package libdocker
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -28,7 +27,7 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	dockertypes "github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
@@ -36,6 +35,7 @@ import (
 	dockerapi "github.com/docker/docker/client"
 	dockermessage "github.com/docker/docker/pkg/jsonmessage"
 	dockerstdcopy "github.com/docker/docker/pkg/stdcopy"
+	"golang.org/x/net/context"
 )
 
 // kubeDockerClient is a wrapped layer of docker client for kubelet internal use. This layer is added to:
@@ -88,8 +88,8 @@ func newKubeDockerClient(dockerClient *dockerapi.Client, requestTimeout, imagePu
 	// Notice that this assumes that docker is running before kubelet is started.
 	v, err := k.Version()
 	if err != nil {
-		klog.Errorf("failed to retrieve docker version: %v", err)
-		klog.Warningf("Using empty version for docker client, this may sometimes cause compatibility issue.")
+		glog.Errorf("failed to retrieve docker version: %v", err)
+		glog.Warningf("Using empty version for docker client, this may sometimes cause compatibility issue.")
 	} else {
 		// Update client version with real api version.
 		dockerClient.NegotiateAPIVersionPing(dockertypes.Ping{APIVersion: v.APIVersion})
@@ -205,7 +205,7 @@ func (d *kubeDockerClient) inspectImageRaw(ref string) (*dockertypes.ImageInspec
 		return nil, ctxErr
 	}
 	if err != nil {
-		if dockerapi.IsErrNotFound(err) {
+		if dockerapi.IsErrImageNotFound(err) {
 			err = ImageNotFoundError{ID: ref}
 		}
 		return nil, err
@@ -318,10 +318,10 @@ type progressReporter struct {
 // newProgressReporter creates a new progressReporter for specific image with specified reporting interval
 func newProgressReporter(image string, cancel context.CancelFunc, imagePullProgressDeadline time.Duration) *progressReporter {
 	return &progressReporter{
-		progress:                  newProgress(),
-		image:                     image,
-		cancel:                    cancel,
-		stopCh:                    make(chan struct{}),
+		progress: newProgress(),
+		image:    image,
+		cancel:   cancel,
+		stopCh:   make(chan struct{}),
 		imagePullProgressDeadline: imagePullProgressDeadline,
 	}
 }
@@ -337,15 +337,15 @@ func (p *progressReporter) start() {
 			case <-ticker.C:
 				progress, timestamp := p.progress.get()
 				// If there is no progress for p.imagePullProgressDeadline, cancel the operation.
-				if time.Since(timestamp) > p.imagePullProgressDeadline {
-					klog.Errorf("Cancel pulling image %q because of no progress for %v, latest progress: %q", p.image, p.imagePullProgressDeadline, progress)
+				if time.Now().Sub(timestamp) > p.imagePullProgressDeadline {
+					glog.Errorf("Cancel pulling image %q because of no progress for %v, latest progress: %q", p.image, p.imagePullProgressDeadline, progress)
 					p.cancel()
 					return
 				}
-				klog.V(2).Infof("Pulling image %q: %q", p.image, progress)
+				glog.V(2).Infof("Pulling image %q: %q", p.image, progress)
 			case <-p.stopCh:
 				progress, _ := p.progress.get()
-				klog.V(2).Infof("Stop pulling image %q: %q", p.image, progress)
+				glog.V(2).Infof("Stop pulling image %q: %q", p.image, progress)
 				return
 			}
 		}
@@ -469,7 +469,7 @@ func (d *kubeDockerClient) StartExec(startExec string, opts dockertypes.ExecStar
 		}
 		return err
 	}
-	resp, err := d.client.ContainerExecAttach(ctx, startExec, dockertypes.ExecStartCheck{
+	resp, err := d.client.ContainerExecAttach(ctx, startExec, dockertypes.ExecConfig{
 		Detach: opts.Detach,
 		Tty:    opts.Tty,
 	})

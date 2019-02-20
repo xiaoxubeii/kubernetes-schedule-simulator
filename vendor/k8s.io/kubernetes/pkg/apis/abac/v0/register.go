@@ -22,10 +22,9 @@ import (
 	"k8s.io/kubernetes/pkg/apis/abac"
 )
 
-// GroupName is the group name use in this package
 const GroupName = "abac.authorization.kubernetes.io"
 
-// SchemeGroupVersion is the API group version used to register abac v0
+// GroupVersion is the API group and version for abac v0
 var SchemeGroupVersion = schema.GroupVersion{Group: GroupName, Version: "v0"}
 
 func init() {
@@ -41,15 +40,11 @@ func init() {
 }
 
 var (
-	// SchemeBuilder is the scheme builder with scheme init functions to run for this API package
 	// TODO: move SchemeBuilder with zz_generated.deepcopy.go to k8s.io/api.
-	SchemeBuilder runtime.SchemeBuilder
-	// localSchemeBuilder ïs a pointer to SchemeBuilder instance. Using localSchemeBuilder
-	// defaulting and conversion init funcs are registered as well.
 	// localSchemeBuilder and AddToScheme will stay in k8s.io/kubernetes.
+	SchemeBuilder      runtime.SchemeBuilder
 	localSchemeBuilder = &SchemeBuilder
-	// AddToScheme is a common registration function for mapping packaged scoped group & version keys to a scheme
-	AddToScheme = localSchemeBuilder.AddToScheme
+	AddToScheme        = localSchemeBuilder.AddToScheme
 )
 
 func init() {

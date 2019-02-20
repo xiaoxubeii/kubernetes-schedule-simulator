@@ -25,18 +25,18 @@ import (
 	"syscall"
 	"testing"
 
-	libipvs "github.com/docker/libnetwork/ipvs"
+	"github.com/docker/libnetwork/ipvs"
 )
 
 func Test_toVirtualServer(t *testing.T) {
 	Tests := []struct {
-		ipvsService   libipvs.Service
+		ipvsService   ipvs.Service
 		virtualServer VirtualServer
 		expectError   bool
 		reason        string
 	}{
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Flags: 0x0,
 			},
 			VirtualServer{},
@@ -44,7 +44,7 @@ func Test_toVirtualServer(t *testing.T) {
 			fmt.Sprintf("IPVS Service Flags should be >= %d, got 0x0", FlagHashed),
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Flags: 0x1,
 			},
 			VirtualServer{},
@@ -52,7 +52,7 @@ func Test_toVirtualServer(t *testing.T) {
 			fmt.Sprintf("IPVS Service Flags should be >= %d, got 0x1", FlagHashed),
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      syscall.IPPROTO_TCP,
 				Port:          80,
 				FWMark:        0,
@@ -76,7 +76,7 @@ func Test_toVirtualServer(t *testing.T) {
 			"",
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      syscall.IPPROTO_UDP,
 				Port:          33434,
 				FWMark:        0,
@@ -100,7 +100,7 @@ func Test_toVirtualServer(t *testing.T) {
 			"",
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      0,
 				Port:          0,
 				FWMark:        0,
@@ -124,7 +124,7 @@ func Test_toVirtualServer(t *testing.T) {
 			"",
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      0,
 				Port:          0,
 				FWMark:        0,
@@ -141,30 +141,6 @@ func Test_toVirtualServer(t *testing.T) {
 				Protocol:  "",
 				Port:      0,
 				Scheduler: "wrr",
-				Flags:     ServiceFlags(FlagPersistent),
-				Timeout:   0,
-			},
-			false,
-			"",
-		},
-		{
-			libipvs.Service{
-				Protocol:      syscall.IPPROTO_SCTP,
-				Port:          80,
-				FWMark:        0,
-				SchedName:     "",
-				Flags:         uint32(FlagPersistent + FlagHashed),
-				Timeout:       0,
-				Netmask:       0xffffffff,
-				AddressFamily: syscall.AF_INET,
-				Address:       nil,
-				PEName:        "",
-			},
-			VirtualServer{
-				Address:   net.ParseIP("0.0.0.0"),
-				Protocol:  "SCTP",
-				Port:      80,
-				Scheduler: "",
 				Flags:     ServiceFlags(FlagPersistent),
 				Timeout:   0,
 			},
@@ -189,13 +165,13 @@ func Test_toVirtualServer(t *testing.T) {
 	}
 }
 
-func Test_toIPVSService(t *testing.T) {
+func Test_toBackendService(t *testing.T) {
 	Tests := []struct {
-		ipvsService   libipvs.Service
+		ipvsService   ipvs.Service
 		virtualServer VirtualServer
 	}{
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      syscall.IPPROTO_TCP,
 				Port:          80,
 				FWMark:        0,
@@ -217,7 +193,7 @@ func Test_toIPVSService(t *testing.T) {
 			},
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      syscall.IPPROTO_UDP,
 				Port:          33434,
 				FWMark:        0,
@@ -239,7 +215,7 @@ func Test_toIPVSService(t *testing.T) {
 			},
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      0,
 				Port:          0,
 				FWMark:        0,
@@ -261,7 +237,7 @@ func Test_toIPVSService(t *testing.T) {
 			},
 		},
 		{
-			libipvs.Service{
+			ipvs.Service{
 				Protocol:      0,
 				Port:          0,
 				FWMark:        0,
@@ -285,7 +261,7 @@ func Test_toIPVSService(t *testing.T) {
 	}
 
 	for i := range Tests {
-		got, err := toIPVSService(&Tests[i].virtualServer)
+		got, err := toBackendService(&Tests[i].virtualServer)
 		if err != nil {
 			t.Errorf("case: %d, unexpected error: %v", i, err)
 		}
@@ -295,13 +271,13 @@ func Test_toIPVSService(t *testing.T) {
 	}
 }
 
-func Test_toRealServer(t *testing.T) {
+func Test_toFrontendDestination(t *testing.T) {
 	Tests := []struct {
-		ipvsDestination libipvs.Destination
+		ipvsDestination ipvs.Destination
 		realServer      RealServer
 	}{
 		{
-			libipvs.Destination{
+			ipvs.Destination{
 				Port:            54321,
 				ConnectionFlags: 0,
 				Weight:          1,
@@ -314,7 +290,7 @@ func Test_toRealServer(t *testing.T) {
 			},
 		},
 		{
-			libipvs.Destination{
+			ipvs.Destination{
 				Port:            53,
 				ConnectionFlags: 0,
 				Weight:          1,
@@ -330,7 +306,7 @@ func Test_toRealServer(t *testing.T) {
 	for i := range Tests {
 		got, err := toRealServer(&Tests[i].ipvsDestination)
 		if err != nil {
-			t.Errorf("case %d unexpected error: %v", i, err)
+			t.Errorf("case %d unexpected error: %d", i, err)
 		}
 		if !reflect.DeepEqual(*got, Tests[i].realServer) {
 			t.Errorf("case %d Failed to translate Destination - got %#v, want %#v", i, *got, Tests[i].realServer)
@@ -338,10 +314,10 @@ func Test_toRealServer(t *testing.T) {
 	}
 }
 
-func Test_toIPVSDestination(t *testing.T) {
+func Test_toBackendDestination(t *testing.T) {
 	Tests := []struct {
 		realServer      RealServer
-		ipvsDestination libipvs.Destination
+		ipvsDestination ipvs.Destination
 	}{
 		{
 			RealServer{
@@ -349,7 +325,7 @@ func Test_toIPVSDestination(t *testing.T) {
 				Port:    54321,
 				Weight:  1,
 			},
-			libipvs.Destination{
+			ipvs.Destination{
 				Port:            54321,
 				ConnectionFlags: 0,
 				Weight:          1,
@@ -362,7 +338,7 @@ func Test_toIPVSDestination(t *testing.T) {
 				Port:    53,
 				Weight:  1,
 			},
-			libipvs.Destination{
+			ipvs.Destination{
 				Port:            53,
 				ConnectionFlags: 0,
 				Weight:          1,
@@ -371,44 +347,44 @@ func Test_toIPVSDestination(t *testing.T) {
 		},
 	}
 	for i := range Tests {
-		got, err := toIPVSDestination(&Tests[i].realServer)
+		got, err := toBackendDestination(&Tests[i].realServer)
 		if err != nil {
-			t.Errorf("case %d unexpected error: %v", i, err)
+			t.Errorf("case %d unexpected error: %d", i, err)
 		}
 		if !reflect.DeepEqual(*got, Tests[i].ipvsDestination) {
-			t.Errorf("case %d failed to translate Destination - got %#v, want %#v", i, *got, Tests[i].ipvsDestination)
+			t.Errorf("case %d Failed to translate Destination - got %#v, want %#v", i, *got, Tests[i].ipvsDestination)
 		}
 	}
 }
 
-func Test_stringToProtocol(t *testing.T) {
+func Test_stringToProtocolNumber(t *testing.T) {
 	tests := []string{
-		"TCP", "UDP", "ICMP", "SCTP",
+		"TCP", "UDP", "ICMP",
 	}
-	expected := []uint16{
-		uint16(syscall.IPPROTO_TCP), uint16(syscall.IPPROTO_UDP), uint16(0), uint16(syscall.IPPROTO_SCTP),
+	expecteds := []uint16{
+		uint16(syscall.IPPROTO_TCP), uint16(syscall.IPPROTO_UDP), uint16(0),
 	}
 	for i := range tests {
-		got := stringToProtocol(tests[i])
-		if got != expected[i] {
-			t.Errorf("stringToProtocol() failed - got %#v, want %#v",
-				got, expected[i])
+		got := stringToProtocolNumber(tests[i])
+		if got != expecteds[i] {
+			t.Errorf("stringToProtocolNumber() failed - got %#v, want %#v",
+				got, expecteds[i])
 		}
 	}
 }
 
-func Test_protocolToString(t *testing.T) {
-	tests := []Protocol{
-		syscall.IPPROTO_TCP, syscall.IPPROTO_UDP, Protocol(0), syscall.IPPROTO_SCTP,
+func Test_protocolNumberToString(t *testing.T) {
+	tests := []ProtoType{
+		syscall.IPPROTO_TCP, syscall.IPPROTO_UDP, ProtoType(0),
 	}
-	expected := []string{
-		"TCP", "UDP", "", "SCTP",
+	expecteds := []string{
+		"TCP", "UDP", "",
 	}
 	for i := range tests {
-		got := protocolToString(tests[i])
-		if got != expected[i] {
-			t.Errorf("protocolToString() failed - got %#v, want %#v",
-				got, expected[i])
+		got := protocolNumbeToString(tests[i])
+		if got != expecteds[i] {
+			t.Errorf("protocolNumbeToString() failed - got %#v, want %#v",
+				got, expecteds[i])
 		}
 	}
 }

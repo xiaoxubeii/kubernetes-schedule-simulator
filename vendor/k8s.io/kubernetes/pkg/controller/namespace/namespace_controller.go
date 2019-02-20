@@ -35,7 +35,7 @@ import (
 	"k8s.io/kubernetes/pkg/controller/namespace/deletion"
 	"k8s.io/kubernetes/pkg/util/metrics"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 const (
@@ -63,7 +63,7 @@ type NamespaceController struct {
 // NewNamespaceController creates a new NamespaceController
 func NewNamespaceController(
 	kubeClient clientset.Interface,
-	dynamicClient dynamic.Interface,
+	clientPool dynamic.ClientPool,
 	discoverResourcesFn func() ([]*metav1.APIResourceList, error),
 	namespaceInformer coreinformers.NamespaceInformer,
 	resyncPeriod time.Duration,
@@ -71,8 +71,8 @@ func NewNamespaceController(
 
 	// create the controller so we can inject the enqueue function
 	namespaceController := &NamespaceController{
-		queue:                      workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "namespace"),
-		namespacedResourcesDeleter: deletion.NewNamespacedResourcesDeleter(kubeClient.CoreV1().Namespaces(), dynamicClient, kubeClient.CoreV1(), discoverResourcesFn, finalizerToken, true),
+		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "namespace"),
+		namespacedResourcesDeleter: deletion.NewNamespacedResourcesDeleter(kubeClient.CoreV1().Namespaces(), clientPool, kubeClient.CoreV1(), discoverResourcesFn, finalizerToken, true),
 	}
 
 	if kubeClient != nil && kubeClient.CoreV1().RESTClient().GetRateLimiter() != nil {
@@ -140,7 +140,7 @@ func (nm *NamespaceController) worker() {
 
 		if estimate, ok := err.(*deletion.ResourcesRemainingError); ok {
 			t := estimate.Estimate/2 + 1
-			klog.V(4).Infof("Content remaining in namespace %s, waiting %d seconds", key, t)
+			glog.V(4).Infof("Content remaining in namespace %s, waiting %d seconds", key, t)
 			nm.queue.AddAfter(key, time.Duration(t)*time.Second)
 		} else {
 			// rather than wait for a full resync, re-add the namespace to the queue to be processed
@@ -163,12 +163,12 @@ func (nm *NamespaceController) worker() {
 func (nm *NamespaceController) syncNamespaceFromKey(key string) (err error) {
 	startTime := time.Now()
 	defer func() {
-		klog.V(4).Infof("Finished syncing namespace %q (%v)", key, time.Since(startTime))
+		glog.V(4).Infof("Finished syncing namespace %q (%v)", key, time.Now().Sub(startTime))
 	}()
 
 	namespace, err := nm.lister.Get(key)
 	if errors.IsNotFound(err) {
-		klog.Infof("Namespace has been deleted %v", key)
+		glog.Infof("Namespace has been deleted %v", key)
 		return nil
 	}
 	if err != nil {
@@ -183,14 +183,14 @@ func (nm *NamespaceController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer nm.queue.ShutDown()
 
-	klog.Infof("Starting namespace controller")
-	defer klog.Infof("Shutting down namespace controller")
+	glog.Infof("Starting namespace controller")
+	defer glog.Infof("Shutting down namespace controller")
 
 	if !controller.WaitForCacheSync("namespace", stopCh, nm.listerSynced) {
 		return
 	}
 
-	klog.V(5).Info("Starting workers of namespace controller")
+	glog.V(5).Info("Starting workers of namespace controller")
 	for i := 0; i < workers; i++ {
 		go wait.Until(nm.worker, time.Second, stopCh)
 	}

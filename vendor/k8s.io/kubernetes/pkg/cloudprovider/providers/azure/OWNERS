@@ -1,13 +1,6 @@
 approvers:
-- andyzhangx
 - brendandburns
-- feiskyer
-- karataliu
-- khenidak
+- colemickens
+- jdumars
 reviewers:
 - andyzhangx
-- brendandburns
-- feiskyer
-- justaugustus
-- karataliu
-- khenidak

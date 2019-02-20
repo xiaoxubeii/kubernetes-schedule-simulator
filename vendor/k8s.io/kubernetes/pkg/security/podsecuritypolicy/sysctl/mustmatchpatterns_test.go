@@ -17,47 +17,48 @@ limitations under the License.
 package sysctl
 
 import (
-	"testing"
-
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/core/helper"
+	"testing"
 )
 
 func TestValidate(t *testing.T) {
 	tests := map[string]struct {
-		whitelist     []string
-		forbiddenSafe []string
-		allowedUnsafe []string
-		allowed       []string
-		disallowed    []string
+		patterns   []string
+		allowed    []string
+		disallowed []string
 	}{
 		// no container requests
-		"with allow all": {
-			whitelist: []string{"foo"},
-			allowed:   []string{"foo"},
+		"nil": {
+			patterns: nil,
+			allowed:  []string{"foo"},
 		},
 		"empty": {
-			whitelist:     []string{"foo"},
-			forbiddenSafe: []string{"*"},
-			disallowed:    []string{"foo"},
+			patterns:   []string{},
+			disallowed: []string{"foo"},
 		},
 		"without wildcard": {
-			whitelist:  []string{"a", "a.b"},
+			patterns:   []string{"a", "a.b"},
 			allowed:    []string{"a", "a.b"},
 			disallowed: []string{"b"},
 		},
+		"with catch-all wildcard": {
+			patterns: []string{"*"},
+			allowed:  []string{"a", "a.b"},
+		},
 		"with catch-all wildcard and non-wildcard": {
-			allowedUnsafe: []string{"a.b.c", "*"},
-			allowed:       []string{"a", "a.b", "a.b.c", "b"},
+			patterns: []string{"a.b.c", "*"},
+			allowed:  []string{"a", "a.b", "a.b.c", "b"},
 		},
 		"without catch-all wildcard": {
-			allowedUnsafe: []string{"a.*", "b.*", "c.d.e", "d.e.f.*"},
-			allowed:       []string{"a.b", "b.c", "c.d.e", "d.e.f.g.h"},
-			disallowed:    []string{"a", "b", "c", "c.d", "d.e", "d.e.f"},
+			patterns:   []string{"a.*", "b.*", "c.d.e", "d.e.f.*"},
+			allowed:    []string{"a.b", "b.c", "c.d.e", "d.e.f.g.h"},
+			disallowed: []string{"a", "b", "c", "c.d", "d.e", "d.e.f"},
 		},
 	}
 
 	for k, v := range tests {
-		strategy := NewMustMatchPatterns(v.whitelist, v.allowedUnsafe, v.forbiddenSafe)
+		strategy := NewMustMatchPatterns(v.patterns)
 
 		pod := &api.Pod{}
 		errs := strategy.Validate(pod)
@@ -65,40 +66,37 @@ func TestValidate(t *testing.T) {
 			t.Errorf("%s: unexpected validaton errors for empty sysctls: %v", k, errs)
 		}
 
-		testAllowed := func() {
-			sysctls := []api.Sysctl{}
-			for _, s := range v.allowed {
-				sysctls = append(sysctls, api.Sysctl{
-					Name:  s,
-					Value: "dummy",
-				})
-			}
-			pod.Spec.SecurityContext = &api.PodSecurityContext{
-				Sysctls: sysctls,
+		sysctls := []api.Sysctl{}
+		for _, s := range v.allowed {
+			sysctls = append(sysctls, api.Sysctl{
+				Name:  s,
+				Value: "dummy",
+			})
+		}
+		testAllowed := func(key string, category string) {
+			pod.Annotations = map[string]string{
+				key: helper.PodAnnotationsFromSysctls(sysctls),
 			}
 			errs = strategy.Validate(pod)
 			if len(errs) != 0 {
-				t.Errorf("%s: unexpected validaton errors for sysctls: %v", k, errs)
+				t.Errorf("%s: unexpected validaton errors for %s sysctls: %v", k, category, errs)
 			}
 		}
-		testDisallowed := func() {
+		testDisallowed := func(key string, category string) {
 			for _, s := range v.disallowed {
-				pod.Spec.SecurityContext = &api.PodSecurityContext{
-					Sysctls: []api.Sysctl{
-						{
-							Name:  s,
-							Value: "dummy",
-						},
-					},
+				pod.Annotations = map[string]string{
+					key: helper.PodAnnotationsFromSysctls([]api.Sysctl{{Name: s, Value: "dummy"}}),
 				}
 				errs = strategy.Validate(pod)
 				if len(errs) == 0 {
-					t.Errorf("%s: expected error for sysctl %q", k, s)
+					t.Errorf("%s: expected error for %s sysctl %q", k, category, s)
 				}
 			}
 		}
 
-		testAllowed()
-		testDisallowed()
+		testAllowed(api.SysctlsPodAnnotationKey, "safe")
+		testAllowed(api.UnsafeSysctlsPodAnnotationKey, "unsafe")
+		testDisallowed(api.SysctlsPodAnnotationKey, "safe")
+		testDisallowed(api.UnsafeSysctlsPodAnnotationKey, "unsafe")
 	}
 }

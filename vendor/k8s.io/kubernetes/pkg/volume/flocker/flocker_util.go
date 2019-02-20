@@ -18,19 +18,19 @@ package flocker
 
 import (
 	"fmt"
+	"time"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/rand"
-
-	volutil "k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/kubernetes/pkg/volume"
 
 	flockerapi "github.com/clusterhq/flocker-go"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
-type flockerUtil struct{}
+type FlockerUtil struct{}
 
-func (util *flockerUtil) DeleteVolume(d *flockerVolumeDeleter) error {
+func (util *FlockerUtil) DeleteVolume(d *flockerVolumeDeleter) error {
 	var err error
 
 	if d.flockerClient == nil {
@@ -48,7 +48,7 @@ func (util *flockerUtil) DeleteVolume(d *flockerVolumeDeleter) error {
 	return d.flockerClient.DeleteDataset(datasetUUID)
 }
 
-func (util *flockerUtil) CreateVolume(c *flockerVolumeProvisioner) (datasetUUID string, volumeSizeGiB int, labels map[string]string, err error) {
+func (util *FlockerUtil) CreateVolume(c *flockerVolumeProvisioner) (datasetUUID string, volumeSizeGB int, labels map[string]string, err error) {
 
 	if c.flockerClient == nil {
 		c.flockerClient, err = c.plugin.newFlockerClient("")
@@ -67,15 +67,13 @@ func (util *flockerUtil) CreateVolume(c *flockerVolumeProvisioner) (datasetUUID 
 	}
 
 	// select random node
+	rand.Seed(time.Now().UTC().UnixNano())
 	node := nodes[rand.Intn(len(nodes))]
-	klog.V(2).Infof("selected flocker node with UUID '%s' to provision dataset", node.UUID)
+	glog.V(2).Infof("selected flocker node with UUID '%s' to provision dataset", node.UUID)
 
 	capacity := c.options.PVC.Spec.Resources.Requests[v1.ResourceName(v1.ResourceStorage)]
 	requestBytes := capacity.Value()
-	volumeSizeGiB, err = volutil.RoundUpToGiBInt(capacity)
-	if err != nil {
-		return
-	}
+	volumeSizeGB = int(volume.RoundUpSize(requestBytes, 1024*1024*1024))
 
 	createOptions := &flockerapi.CreateDatasetOptions{
 		MaximumSize: requestBytes,
@@ -92,7 +90,7 @@ func (util *flockerUtil) CreateVolume(c *flockerVolumeProvisioner) (datasetUUID 
 	}
 	datasetUUID = datasetState.DatasetID
 
-	klog.V(2).Infof("successfully created Flocker dataset with UUID '%s'", datasetUUID)
+	glog.V(2).Infof("successfully created Flocker dataset with UUID '%s'", datasetUUID)
 
 	return
 }

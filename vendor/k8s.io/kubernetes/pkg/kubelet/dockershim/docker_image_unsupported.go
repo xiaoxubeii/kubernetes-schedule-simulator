@@ -19,13 +19,12 @@ limitations under the License.
 package dockershim
 
 import (
-	"context"
 	"fmt"
 
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 )
 
 // ImageFsInfo returns information of the filesystem that is used to store images.
-func (ds *dockerService) ImageFsInfo(_ context.Context, r *runtimeapi.ImageFsInfoRequest) (*runtimeapi.ImageFsInfoResponse, error) {
+func (ds *dockerService) ImageFsInfo() ([]*runtimeapi.FilesystemUsage, error) {
 	return nil, fmt.Errorf("not implemented")
 }

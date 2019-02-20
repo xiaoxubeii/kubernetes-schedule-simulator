@@ -24,7 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/request"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 const (
@@ -40,19 +40,19 @@ type CrossRequestRetryDelay struct {
 	backoff Backoff
 }
 
-// NewCrossRequestRetryDelay creates a new CrossRequestRetryDelay
+// Create a new CrossRequestRetryDelay
 func NewCrossRequestRetryDelay() *CrossRequestRetryDelay {
 	c := &CrossRequestRetryDelay{}
 	c.backoff.init(decayIntervalSeconds, decayFraction, maxDelay)
 	return c
 }
 
-// BeforeSign is added to the Sign chain; called before each request
+// Added to the Sign chain; called before each request
 func (c *CrossRequestRetryDelay) BeforeSign(r *request.Request) {
 	now := time.Now()
 	delay := c.backoff.ComputeDelayForRequest(now)
 	if delay > 0 {
-		klog.Warningf("Inserting delay before AWS request (%s) to avoid RequestLimitExceeded: %s",
+		glog.Warningf("Inserting delay before AWS request (%s) to avoid RequestLimitExceeded: %s",
 			describeRequest(r), delay.String())
 
 		if sleepFn := r.Config.SleepDelay; sleepFn != nil {
@@ -69,22 +69,19 @@ func (c *CrossRequestRetryDelay) BeforeSign(r *request.Request) {
 	}
 }
 
-// Return the operation name, for use in log messages and metrics
-func operationName(r *request.Request) string {
+// Return a user-friendly string describing the request, for use in log messages
+func describeRequest(r *request.Request) string {
+	service := r.ClientInfo.ServiceName
+
 	name := "?"
 	if r.Operation != nil {
 		name = r.Operation.Name
 	}
-	return name
+
+	return service + "::" + name
 }
 
-// Return a user-friendly string describing the request, for use in log messages
-func describeRequest(r *request.Request) string {
-	service := r.ClientInfo.ServiceName
-	return service + "::" + operationName(r)
-}
-
-// AfterRetry is added to the AfterRetry chain; called after any error
+// Added to the AfterRetry chain; called after any error
 func (c *CrossRequestRetryDelay) AfterRetry(r *request.Request) {
 	if r.Error == nil {
 		return
@@ -95,8 +92,7 @@ func (c *CrossRequestRetryDelay) AfterRetry(r *request.Request) {
 	}
 	if awsError.Code() == "RequestLimitExceeded" {
 		c.backoff.ReportError()
-		recordAWSThrottlesMetric(operationName(r))
-		klog.Warningf("Got RequestLimitExceeded error on AWS request (%s)",
+		glog.Warningf("Got RequestLimitExceeded error on AWS request (%s)",
 			describeRequest(r))
 	}
 }
@@ -126,8 +122,7 @@ func (b *Backoff) init(decayIntervalSeconds int, decayFraction float64, maxDelay
 	b.maxDelay = maxDelay
 }
 
-// ComputeDelayForRequest computes the delay required for a request, also
-// updates internal state to count this request
+// Computes the delay required for a request, also updating internal state to count this request
 func (b *Backoff) ComputeDelayForRequest(now time.Time) time.Duration {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
@@ -166,7 +161,7 @@ func (b *Backoff) ComputeDelayForRequest(now time.Time) time.Duration {
 	return time.Second * time.Duration(int(delay.Seconds()))
 }
 
-// ReportError is called when we observe a throttling error
+// Called when we observe a throttling error
 func (b *Backoff) ReportError() {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()

@@ -41,10 +41,7 @@ func (v mergeStrategy) MergeList(e apply.ListElement) (apply.Result, error) {
 	if result, done := v.doAddOrDelete(e); done {
 		return result, nil
 	}
-	// Detect conflict in ListElement
-	if err := v.doConflictDetect(e); err != nil {
-		return apply.Result{}, err
-	}
+
 	// Merge each item in the list and append it to the list
 	merged := []interface{}{}
 	for _, value := range e.Values {
@@ -79,10 +76,7 @@ func (v mergeStrategy) MergeMap(e apply.MapElement) (apply.Result, error) {
 	if result, done := v.doAddOrDelete(e); done {
 		return result, nil
 	}
-	// Detect conflict in MapElement
-	if err := v.doConflictDetect(e); err != nil {
-		return apply.Result{}, err
-	}
+
 	return v.doMergeMap(e.GetValues())
 }
 
@@ -92,10 +86,7 @@ func (v mergeStrategy) MergeType(e apply.TypeElement) (apply.Result, error) {
 	if result, done := v.doAddOrDelete(e); done {
 		return result, nil
 	}
-	// Detect conflict in TypeElement
-	if err := v.doConflictDetect(e); err != nil {
-		return apply.Result{}, err
-	}
+
 	return v.doMergeMap(e.GetValues())
 }
 
@@ -152,11 +143,6 @@ func (v mergeStrategy) MergePrimitive(diff apply.PrimitiveElement) (apply.Result
 // MergeEmpty returns an empty result
 func (v mergeStrategy) MergeEmpty(diff apply.EmptyElement) (apply.Result, error) {
 	return apply.Result{Operation: apply.SET}, nil
-}
-
-// doConflictDetect returns error if element has conflict
-func (v mergeStrategy) doConflictDetect(e apply.Element) error {
-	return v.strategic.doConflictDetect(e)
 }
 
 var _ apply.Strategy = &mergeStrategy{}

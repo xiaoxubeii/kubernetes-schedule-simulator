@@ -16,9 +16,8 @@ go_library(
 )
 
 go_test(
-    name = "go_default_test",
+    name = "go_default_xtest",
     srcs = [
-        "merge_conflict_test.go",
         "merge_map_list_test.go",
         "merge_map_test.go",
         "merge_primitive_list_test.go",
@@ -34,18 +33,19 @@ go_test(
         ":swagger-spec",
         "//api/openapi-spec:swagger-spec",
     ],
-    embed = [":go_default_library"],
+    importpath = "k8s.io/kubernetes/pkg/kubectl/apply/strategy_test",
     deps = [
+        ":go_default_library",
         "//pkg/kubectl/apply:go_default_library",
         "//pkg/kubectl/apply/parse:go_default_library",
         "//pkg/kubectl/cmd/util/openapi:go_default_library",
         "//pkg/kubectl/cmd/util/openapi/testing:go_default_library",
-        "//staging/src/k8s.io/apimachinery/pkg/util/diff:go_default_library",
+        "//vendor/github.com/ghodss/yaml:go_default_library",
         "//vendor/github.com/onsi/ginkgo:go_default_library",
         "//vendor/github.com/onsi/ginkgo/config:go_default_library",
         "//vendor/github.com/onsi/ginkgo/types:go_default_library",
         "//vendor/github.com/onsi/gomega:go_default_library",
-        "//vendor/sigs.k8s.io/yaml:go_default_library",
+        "//vendor/k8s.io/apimachinery/pkg/util/diff:go_default_library",
     ],
 )
 

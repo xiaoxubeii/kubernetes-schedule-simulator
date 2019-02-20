@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	"k8s.io/api/core/v1"
 	storage "k8s.io/api/storage/v1"
@@ -38,20 +38,16 @@ import (
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
-	corelisters "k8s.io/client-go/listers/core/v1"
 	storagelisters "k8s.io/client-go/listers/storage/v1"
 	core "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/controller"
-	"k8s.io/kubernetes/pkg/features"
 	vol "k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util/recyclerclient"
 )
 
 // This is a unit test framework for persistent volume controller.
@@ -161,7 +157,7 @@ func (r *volumeReactor) React(action core.Action) (handled bool, ret runtime.Obj
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	klog.V(4).Infof("reactor got operation %q on %q", action.GetVerb(), action.GetResource())
+	glog.V(4).Infof("reactor got operation %q on %q", action.GetVerb(), action.GetResource())
 
 	// Inject error when requested
 	err = r.injectReactError(action)
@@ -181,17 +177,11 @@ func (r *volumeReactor) React(action core.Action) (handled bool, ret runtime.Obj
 			return true, nil, fmt.Errorf("Cannot create volume %s: volume already exists", volume.Name)
 		}
 
-		// mimic apiserver defaulting
-		if volume.Spec.VolumeMode == nil && utilfeature.DefaultFeatureGate.Enabled(features.BlockVolume) {
-			volume.Spec.VolumeMode = new(v1.PersistentVolumeMode)
-			*volume.Spec.VolumeMode = v1.PersistentVolumeFilesystem
-		}
-
 		// Store the updated object to appropriate places.
 		r.volumes[volume.Name] = volume
 		r.changedObjects = append(r.changedObjects, volume)
 		r.changedSinceLastSync++
-		klog.V(4).Infof("created volume %s", volume.Name)
+		glog.V(4).Infof("created volume %s", volume.Name)
 		return true, volume, nil
 
 	case action.Matches("update", "persistentvolumes"):
@@ -217,7 +207,7 @@ func (r *volumeReactor) React(action core.Action) (handled bool, ret runtime.Obj
 		r.volumes[volume.Name] = volume
 		r.changedObjects = append(r.changedObjects, volume)
 		r.changedSinceLastSync++
-		klog.V(4).Infof("saved updated volume %s", volume.Name)
+		glog.V(4).Infof("saved updated volume %s", volume.Name)
 		return true, volume, nil
 
 	case action.Matches("update", "persistentvolumeclaims"):
@@ -243,23 +233,23 @@ func (r *volumeReactor) React(action core.Action) (handled bool, ret runtime.Obj
 		r.claims[claim.Name] = claim
 		r.changedObjects = append(r.changedObjects, claim)
 		r.changedSinceLastSync++
-		klog.V(4).Infof("saved updated claim %s", claim.Name)
+		glog.V(4).Infof("saved updated claim %s", claim.Name)
 		return true, claim, nil
 
 	case action.Matches("get", "persistentvolumes"):
 		name := action.(core.GetAction).GetName()
 		volume, found := r.volumes[name]
 		if found {
-			klog.V(4).Infof("GetVolume: found %s", volume.Name)
+			glog.V(4).Infof("GetVolume: found %s", volume.Name)
 			return true, volume, nil
 		} else {
-			klog.V(4).Infof("GetVolume: volume %s not found", name)
+			glog.V(4).Infof("GetVolume: volume %s not found", name)
 			return true, nil, fmt.Errorf("Cannot find volume %s", name)
 		}
 
 	case action.Matches("delete", "persistentvolumes"):
 		name := action.(core.DeleteAction).GetName()
-		klog.V(4).Infof("deleted volume %s", name)
+		glog.V(4).Infof("deleted volume %s", name)
 		_, found := r.volumes[name]
 		if found {
 			delete(r.volumes, name)
@@ -271,7 +261,7 @@ func (r *volumeReactor) React(action core.Action) (handled bool, ret runtime.Obj
 
 	case action.Matches("delete", "persistentvolumeclaims"):
 		name := action.(core.DeleteAction).GetName()
-		klog.V(4).Infof("deleted claim %s", name)
+		glog.V(4).Infof("deleted claim %s", name)
 		_, found := r.volumes[name]
 		if found {
 			delete(r.claims, name)
@@ -294,11 +284,11 @@ func (r *volumeReactor) injectReactError(action core.Action) error {
 	}
 
 	for i, expected := range r.errors {
-		klog.V(4).Infof("trying to match %q %q with %q %q", expected.verb, expected.resource, action.GetVerb(), action.GetResource())
+		glog.V(4).Infof("trying to match %q %q with %q %q", expected.verb, expected.resource, action.GetVerb(), action.GetResource())
 		if action.Matches(expected.verb, expected.resource) {
 			// That's the action we're waiting for, remove it from injectedErrors
 			r.errors = append(r.errors[:i], r.errors[i+1:]...)
-			klog.V(4).Infof("reactor found matching error at index %d: %q %q, returning %v", i, expected.verb, expected.resource, expected.error)
+			glog.V(4).Infof("reactor found matching error at index %d: %q %q, returning %v", i, expected.verb, expected.resource, expected.error)
 			return expected.error
 		}
 	}
@@ -387,14 +377,14 @@ func checkEvents(t *testing.T, expectedEvents []string, ctrl *PersistentVolumeCo
 		select {
 		case event, ok := <-fakeRecorder.Events:
 			if ok {
-				klog.V(5).Infof("event recorder got event %s", event)
+				glog.V(5).Infof("event recorder got event %s", event)
 				gotEvents = append(gotEvents, event)
 			} else {
-				klog.V(5).Infof("event recorder finished")
+				glog.V(5).Infof("event recorder finished")
 				finished = true
 			}
 		case _, _ = <-timer.C:
-			klog.V(5).Infof("event recorder timeout")
+			glog.V(5).Infof("event recorder timeout")
 			finished = true
 		}
 	}
@@ -434,10 +424,10 @@ func (r *volumeReactor) popChange() interface{} {
 		switch obj.(type) {
 		case *v1.PersistentVolume:
 			vol, _ := obj.(*v1.PersistentVolume)
-			klog.V(4).Infof("reactor queue: %s", vol.Name)
+			glog.V(4).Infof("reactor queue: %s", vol.Name)
 		case *v1.PersistentVolumeClaim:
 			claim, _ := obj.(*v1.PersistentVolumeClaim)
-			klog.V(4).Infof("reactor queue: %s", claim.Name)
+			glog.V(4).Infof("reactor queue: %s", claim.Name)
 		}
 	}
 
@@ -619,8 +609,6 @@ func newTestController(kubeClient clientset.Interface, informerFactory informers
 		VolumeInformer:            informerFactory.Core().V1().PersistentVolumes(),
 		ClaimInformer:             informerFactory.Core().V1().PersistentVolumeClaims(),
 		ClassInformer:             informerFactory.Storage().V1().StorageClasses(),
-		PodInformer:               informerFactory.Core().V1().Pods(),
-		NodeInformer:              informerFactory.Core().V1().Nodes(),
 		EventRecorder:             record.NewFakeRecorder(1000),
 		EnableDynamicProvisioning: enableDynamicProvisioning,
 	}
@@ -638,7 +626,6 @@ func newTestController(kubeClient clientset.Interface, informerFactory informers
 
 // newVolume returns a new volume with given attributes
 func newVolume(name, capacity, boundToClaimUID, boundToClaimName string, phase v1.PersistentVolumePhase, reclaimPolicy v1.PersistentVolumeReclaimPolicy, class string, annotations ...string) *v1.PersistentVolume {
-	fs := v1.PersistentVolumeFilesystem
 	volume := v1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
@@ -654,7 +641,6 @@ func newVolume(name, capacity, boundToClaimUID, boundToClaimName string, phase v
 			AccessModes:                   []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce, v1.ReadOnlyMany},
 			PersistentVolumeReclaimPolicy: reclaimPolicy,
 			StorageClassName:              class,
-			VolumeMode:                    &fs,
 		},
 		Status: v1.PersistentVolumeStatus{
 			Phase: phase,
@@ -750,7 +736,6 @@ func newVolumeArray(name, capacity, boundToClaimUID, boundToClaimName string, ph
 
 // newClaim returns a new claim with given attributes
 func newClaim(name, claimUID, capacity, boundToVolume string, phase v1.PersistentVolumeClaimPhase, class *string, annotations ...string) *v1.PersistentVolumeClaim {
-	fs := v1.PersistentVolumeFilesystem
 	claim := v1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            name,
@@ -767,7 +752,6 @@ func newClaim(name, claimUID, capacity, boundToVolume string, phase v1.Persisten
 			},
 			VolumeName:       boundToVolume,
 			StorageClassName: class,
-			VolumeMode:       &fs,
 		},
 		Status: v1.PersistentVolumeClaimStatus{
 			Phase: phase,
@@ -815,13 +799,6 @@ func claimWithAnnotation(name, value string, claims []*v1.PersistentVolumeClaim)
 	} else {
 		claims[0].Annotations[name] = value
 	}
-	return claims
-}
-
-// claimWithAccessMode saves given access into given claims.
-// Meant to be used to compose claims specified inline in a test.
-func claimWithAccessMode(modes []v1.PersistentVolumeAccessMode, claims []*v1.PersistentVolumeClaim) []*v1.PersistentVolumeClaim {
-	claims[0].Spec.AccessModes = modes
 	return claims
 }
 
@@ -910,7 +887,7 @@ func wrapTestWithInjectedOperation(toWrap testCall, injectBeforeOperation func(c
 		// Inject a hook before async operation starts
 		ctrl.preOperationHook = func(operationName string) {
 			// Inside the hook, run the function to inject
-			klog.V(4).Infof("reactor: scheduleOperation reached, injecting call")
+			glog.V(4).Infof("reactor: scheduleOperation reached, injecting call")
 			injectBeforeOperation(ctrl, reactor)
 		}
 
@@ -955,9 +932,9 @@ func evaluateTestResults(ctrl *PersistentVolumeController, reactor *volumeReacto
 // 2. Call the tested function (syncClaim/syncVolume) via
 //    controllerTest.testCall *once*.
 // 3. Compare resulting volumes and claims with expected volumes and claims.
-func runSyncTests(t *testing.T, tests []controllerTest, storageClasses []*storage.StorageClass, pods []*v1.Pod) {
+func runSyncTests(t *testing.T, tests []controllerTest, storageClasses []*storage.StorageClass) {
 	for _, test := range tests {
-		klog.V(4).Infof("starting test %q", test.name)
+		glog.V(4).Infof("starting test %q", test.name)
 
 		// Initialize the controller
 		client := &fake.Clientset{}
@@ -981,12 +958,6 @@ func runSyncTests(t *testing.T, tests []controllerTest, storageClasses []*storag
 			indexer.Add(class)
 		}
 		ctrl.classLister = storagelisters.NewStorageClassLister(indexer)
-
-		podIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
-		for _, pod := range pods {
-			podIndexer.Add(pod)
-		}
-		ctrl.podLister = corelisters.NewPodLister(podIndexer)
 
 		// Run the tested functions
 		err = test.test(ctrl, reactor, test)
@@ -1020,7 +991,7 @@ func runSyncTests(t *testing.T, tests []controllerTest, storageClasses []*storag
 // Some limit of calls in enforced to prevent endless loops.
 func runMultisyncTests(t *testing.T, tests []controllerTest, storageClasses []*storage.StorageClass, defaultStorageClass string) {
 	for _, test := range tests {
-		klog.V(4).Infof("starting multisync test %q", test.name)
+		glog.V(4).Infof("starting multisync test %q", test.name)
 
 		// Initialize the controller
 		client := &fake.Clientset{}
@@ -1058,7 +1029,7 @@ func runMultisyncTests(t *testing.T, tests []controllerTest, storageClasses []*s
 		counter := 0
 		for {
 			counter++
-			klog.V(4).Infof("test %q: iteration %d", test.name, counter)
+			glog.V(4).Infof("test %q: iteration %d", test.name, counter)
 
 			if counter > 100 {
 				t.Errorf("Test %q failed: too many iterations", test.name)
@@ -1076,7 +1047,7 @@ func runMultisyncTests(t *testing.T, tests []controllerTest, storageClasses []*s
 					// Simulate "periodic sync" of everything (until it produces
 					// no changes).
 					firstSync = false
-					klog.V(4).Infof("test %q: simulating periodical sync of all claims and volumes", test.name)
+					glog.V(4).Infof("test %q: simulating periodical sync of all claims and volumes", test.name)
 					reactor.syncAll()
 				} else {
 					// Last sync did not produce any updates, the test reached
@@ -1097,7 +1068,7 @@ func runMultisyncTests(t *testing.T, tests []controllerTest, storageClasses []*s
 				if err != nil {
 					if err == versionConflictError {
 						// Ignore version errors
-						klog.V(4).Infof("test intentionaly ignores version error.")
+						glog.V(4).Infof("test intentionaly ignores version error.")
 					} else {
 						t.Errorf("Error calling syncClaim: %v", err)
 						// Finish the loop on the first error
@@ -1114,7 +1085,7 @@ func runMultisyncTests(t *testing.T, tests []controllerTest, storageClasses []*s
 				if err != nil {
 					if err == versionConflictError {
 						// Ignore version errors
-						klog.V(4).Infof("test intentionaly ignores version error.")
+						glog.V(4).Infof("test intentionaly ignores version error.")
 					} else {
 						t.Errorf("Error calling syncVolume: %v", err)
 						// Finish the loop on the first error
@@ -1126,7 +1097,7 @@ func runMultisyncTests(t *testing.T, tests []controllerTest, storageClasses []*s
 			}
 		}
 		evaluateTestResults(ctrl, reactor, test, t)
-		klog.V(4).Infof("test %q finished after %d iterations", test.name, counter)
+		glog.V(4).Infof("test %q finished after %d iterations", test.name, counter)
 	}
 }
 
@@ -1197,7 +1168,7 @@ func (plugin *mockVolumePlugin) NewUnmounter(name string, podUID types.UID) (vol
 func (plugin *mockVolumePlugin) NewProvisioner(options vol.VolumeOptions) (vol.Provisioner, error) {
 	if len(plugin.provisionCalls) > 0 {
 		// mockVolumePlugin directly implements Provisioner interface
-		klog.V(4).Infof("mock plugin NewProvisioner called, returning mock provisioner")
+		glog.V(4).Infof("mock plugin NewProvisioner called, returning mock provisioner")
 		plugin.provisionOptions = options
 		return plugin, nil
 	} else {
@@ -1205,7 +1176,7 @@ func (plugin *mockVolumePlugin) NewProvisioner(options vol.VolumeOptions) (vol.P
 	}
 }
 
-func (plugin *mockVolumePlugin) Provision(selectedNode *v1.Node, allowedTopologies []v1.TopologySelectorTerm) (*v1.PersistentVolume, error) {
+func (plugin *mockVolumePlugin) Provision() (*v1.PersistentVolume, error) {
 	if len(plugin.provisionCalls) <= plugin.provisionCallCounter {
 		return nil, fmt.Errorf("Mock plugin error: unexpected provisioner call %d", plugin.provisionCallCounter)
 	}
@@ -1213,7 +1184,7 @@ func (plugin *mockVolumePlugin) Provision(selectedNode *v1.Node, allowedTopologi
 	var pv *v1.PersistentVolume
 	call := plugin.provisionCalls[plugin.provisionCallCounter]
 	if !reflect.DeepEqual(call.expectedParameters, plugin.provisionOptions.Parameters) {
-		klog.Errorf("invalid provisioner call, expected options: %+v, got: %+v", call.expectedParameters, plugin.provisionOptions.Parameters)
+		glog.Errorf("invalid provisioner call, expected options: %+v, got: %+v", call.expectedParameters, plugin.provisionOptions.Parameters)
 		return nil, fmt.Errorf("Mock plugin error: invalid provisioner call")
 	}
 	if call.ret == nil {
@@ -1234,15 +1205,11 @@ func (plugin *mockVolumePlugin) Provision(selectedNode *v1.Node, allowedTopologi
 					GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{},
 				},
 			},
-			Status: v1.PersistentVolumeStatus{
-				Phase: v1.VolumeAvailable,
-			},
 		}
-		pv.Spec.VolumeMode = plugin.provisionOptions.PVC.Spec.VolumeMode
 	}
 
 	plugin.provisionCallCounter++
-	klog.V(4).Infof("mock plugin Provision call nr. %d, returning %v: %v", plugin.provisionCallCounter, pv, call.ret)
+	glog.V(4).Infof("mock plugin Provision call nr. %d, returning %v: %v", plugin.provisionCallCounter, pv, call.ret)
 	return pv, call.ret
 }
 
@@ -1251,7 +1218,7 @@ func (plugin *mockVolumePlugin) Provision(selectedNode *v1.Node, allowedTopologi
 func (plugin *mockVolumePlugin) NewDeleter(spec *vol.Spec) (vol.Deleter, error) {
 	if len(plugin.deleteCalls) > 0 {
 		// mockVolumePlugin directly implements Deleter interface
-		klog.V(4).Infof("mock plugin NewDeleter called, returning mock deleter")
+		glog.V(4).Infof("mock plugin NewDeleter called, returning mock deleter")
 		return plugin, nil
 	} else {
 		return nil, fmt.Errorf("Mock plugin error: no deleteCalls configured")
@@ -1264,7 +1231,7 @@ func (plugin *mockVolumePlugin) Delete() error {
 	}
 	ret := plugin.deleteCalls[plugin.deleteCallCounter]
 	plugin.deleteCallCounter++
-	klog.V(4).Infof("mock plugin Delete call nr. %d, returning %v", plugin.deleteCallCounter, ret)
+	glog.V(4).Infof("mock plugin Delete call nr. %d, returning %v", plugin.deleteCallCounter, ret)
 	return ret
 }
 
@@ -1280,7 +1247,7 @@ func (plugin *mockVolumePlugin) GetMetrics() (*vol.Metrics, error) {
 
 // Recycler interfaces
 
-func (plugin *mockVolumePlugin) Recycle(pvName string, spec *vol.Spec, eventRecorder recyclerclient.RecycleEventRecorder) error {
+func (plugin *mockVolumePlugin) Recycle(pvName string, spec *vol.Spec, eventRecorder vol.RecycleEventRecorder) error {
 	if len(plugin.recycleCalls) == 0 {
 		return fmt.Errorf("Mock plugin error: no recycleCalls configured")
 	}
@@ -1290,6 +1257,6 @@ func (plugin *mockVolumePlugin) Recycle(pvName string, spec *vol.Spec, eventReco
 	}
 	ret := plugin.recycleCalls[plugin.recycleCallCounter]
 	plugin.recycleCallCounter++
-	klog.V(4).Infof("mock plugin Recycle call nr. %d, returning %v", plugin.recycleCallCounter, ret)
+	glog.V(4).Infof("mock plugin Recycle call nr. %d, returning %v", plugin.recycleCallCounter, ret)
 	return ret
 }

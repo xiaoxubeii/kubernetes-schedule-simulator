@@ -33,7 +33,6 @@ const (
 	Reject      = "REJECT"
 	ToDest      = "--to-destination "
 	Recent      = "recent "
-	MatchSet    = "--match-set "
 )
 
 type Rule map[string]string
@@ -98,8 +97,8 @@ func (*FakeIPTables) AddReloadFunc(reloadFunc func()) {}
 
 func (*FakeIPTables) Destroy() {}
 
-func getToken(line, separator string) string {
-	tokens := strings.Split(line, separator)
+func getToken(line, seperator string) string {
+	tokens := strings.Split(line, seperator)
 	if len(tokens) == 2 {
 		return strings.Split(tokens[1], " ")[0]
 	}
@@ -113,7 +112,7 @@ func (f *FakeIPTables) GetRules(chainName string) (rules []Rule) {
 	for _, l := range strings.Split(string(f.Lines), "\n") {
 		if strings.Contains(l, fmt.Sprintf("-A %v", chainName)) {
 			newRule := Rule(map[string]string{})
-			for _, arg := range []string{Destination, Source, DPort, Protocol, Jump, ToDest, Recent, MatchSet} {
+			for _, arg := range []string{Destination, Source, DPort, Protocol, Jump, ToDest, Recent} {
 				tok := getToken(l, arg)
 				if tok != "" {
 					newRule[arg] = tok

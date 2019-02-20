@@ -50,21 +50,7 @@ func (f *FakeCmd) SetStdout(out io.Writer) {}
 
 func (f *FakeCmd) SetStderr(out io.Writer) {}
 
-func (f *FakeCmd) SetEnv(env []string) {}
-
 func (f *FakeCmd) Stop() {}
-
-func (f *FakeCmd) Start() error { return nil }
-
-func (f *FakeCmd) Wait() error { return nil }
-
-func (f *FakeCmd) StdoutPipe() (io.ReadCloser, error) {
-	return nil, nil
-}
-
-func (f *FakeCmd) StderrPipe() (io.ReadCloser, error) {
-	return nil, nil
-}
 
 type fakeExitError struct {
 	exited     bool

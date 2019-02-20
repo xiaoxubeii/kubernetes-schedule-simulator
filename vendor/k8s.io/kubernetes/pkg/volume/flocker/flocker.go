@@ -22,9 +22,9 @@ import (
 	"path"
 	"time"
 
+	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/util/env"
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/util/strings"
@@ -34,7 +34,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util"
 )
 
-// ProbeVolumePlugins is the primary entrypoint for volume plugins.
+// This is the primary entrypoint for volume plugins.
 func ProbeVolumePlugins() []volume.VolumePlugin {
 	return []volume.VolumePlugin{&flockerPlugin{nil}}
 }
@@ -116,11 +116,11 @@ func (p *flockerPlugin) SupportsMountOption() bool {
 	return false
 }
 
-func (p *flockerPlugin) SupportsBulkVolumeVerification() bool {
+func (plugin *flockerPlugin) SupportsBulkVolumeVerification() bool {
 	return false
 }
 
-func (p *flockerPlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
+func (plugin *flockerPlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
 	return []v1.PersistentVolumeAccessMode{
 		v1.ReadWriteOnce,
 	}
@@ -136,12 +136,12 @@ func (p *flockerPlugin) getFlockerVolumeSource(spec *volume.Spec) (*v1.FlockerVo
 	return spec.PersistentVolume.Spec.Flocker, readOnly
 }
 
-func (p *flockerPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod, _ volume.VolumeOptions) (volume.Mounter, error) {
+func (plugin *flockerPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod, _ volume.VolumeOptions) (volume.Mounter, error) {
 	// Inject real implementations here, test through the internal function.
-	return p.newMounterInternal(spec, pod.UID, &flockerUtil{}, p.host.GetMounter(p.GetPluginName()))
+	return plugin.newMounterInternal(spec, pod.UID, &FlockerUtil{}, plugin.host.GetMounter(plugin.GetPluginName()))
 }
 
-func (p *flockerPlugin) newMounterInternal(spec *volume.Spec, podUID types.UID, manager volumeManager, mounter mount.Interface) (volume.Mounter, error) {
+func (plugin *flockerPlugin) newMounterInternal(spec *volume.Spec, podUID types.UID, manager volumeManager, mounter mount.Interface) (volume.Mounter, error) {
 	volumeSource, readOnly, err := getVolumeSource(spec)
 	if err != nil {
 		return nil, err
@@ -158,15 +158,15 @@ func (p *flockerPlugin) newMounterInternal(spec *volume.Spec, podUID types.UID, 
 			datasetUUID:     datasetUUID,
 			mounter:         mounter,
 			manager:         manager,
-			plugin:          p,
-			MetricsProvider: volume.NewMetricsStatFS(getPath(podUID, spec.Name(), p.host)),
+			plugin:          plugin,
+			MetricsProvider: volume.NewMetricsStatFS(getPath(podUID, spec.Name(), plugin.host)),
 		},
 		readOnly: readOnly}, nil
 }
 
 func (p *flockerPlugin) NewUnmounter(volName string, podUID types.UID) (volume.Unmounter, error) {
 	// Inject real implementations here, test through the internal function.
-	return p.newUnmounterInternal(volName, podUID, &flockerUtil{}, p.host.GetMounter(p.GetPluginName()))
+	return p.newUnmounterInternal(volName, podUID, &FlockerUtil{}, p.host.GetMounter(p.GetPluginName()))
 }
 
 func (p *flockerPlugin) newUnmounterInternal(volName string, podUID types.UID, manager volumeManager, mounter mount.Interface) (volume.Unmounter, error) {
@@ -304,15 +304,15 @@ func (b *flockerVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 		}
 		_, err := b.flockerClient.GetDatasetState(datasetUUID)
 		if err != nil {
-			return fmt.Errorf("The volume with datasetUUID='%s' migrated unsuccessfully", datasetUUID)
+			return fmt.Errorf("The volume with datasetUUID='%s' migrated unsuccessfully.", datasetUUID)
 		}
 	}
 
 	// TODO: handle failed mounts here.
 	notMnt, err := b.mounter.IsLikelyNotMountPoint(dir)
-	klog.V(4).Infof("flockerVolume set up: %s %v %v, datasetUUID %v readOnly %v", dir, !notMnt, err, datasetUUID, b.readOnly)
+	glog.V(4).Infof("flockerVolume set up: %s %v %v, datasetUUID %v readOnly %v", dir, !notMnt, err, datasetUUID, b.readOnly)
 	if err != nil && !os.IsNotExist(err) {
-		klog.Errorf("cannot validate mount point: %s %v", dir, err)
+		glog.Errorf("cannot validate mount point: %s %v", dir, err)
 		return err
 	}
 	if !notMnt {
@@ -320,7 +320,7 @@ func (b *flockerVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 	}
 
 	if err := os.MkdirAll(dir, 0750); err != nil {
-		klog.Errorf("mkdir failed on disk %s (%v)", dir, err)
+		glog.Errorf("mkdir failed on disk %s (%v)", dir, err)
 		return err
 	}
 
@@ -331,33 +331,33 @@ func (b *flockerVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 	}
 
 	globalFlockerPath := makeGlobalFlockerPath(datasetUUID)
-	klog.V(4).Infof("attempting to mount %s", dir)
+	glog.V(4).Infof("attempting to mount %s", dir)
 
 	err = b.mounter.Mount(globalFlockerPath, dir, "", options)
 	if err != nil {
 		notMnt, mntErr := b.mounter.IsLikelyNotMountPoint(dir)
 		if mntErr != nil {
-			klog.Errorf("isLikelyNotMountPoint check failed: %v", mntErr)
+			glog.Errorf("isLikelyNotMountPoint check failed: %v", mntErr)
 			return err
 		}
 		if !notMnt {
 			if mntErr = b.mounter.Unmount(dir); mntErr != nil {
-				klog.Errorf("failed to unmount: %v", mntErr)
+				glog.Errorf("failed to unmount: %v", mntErr)
 				return err
 			}
 			notMnt, mntErr := b.mounter.IsLikelyNotMountPoint(dir)
 			if mntErr != nil {
-				klog.Errorf("isLikelyNotMountPoint check failed: %v", mntErr)
+				glog.Errorf("isLikelyNotMountPoint check failed: %v", mntErr)
 				return err
 			}
 			if !notMnt {
 				// This is very odd, we don't expect it.  We'll try again next sync loop.
-				klog.Errorf("%s is still mounted, despite call to unmount().  Will try again next sync loop.", dir)
+				glog.Errorf("%s is still mounted, despite call to unmount().  Will try again next sync loop.", dir)
 				return err
 			}
 		}
 		os.Remove(dir)
-		klog.Errorf("mount of disk %s failed: %v", dir, err)
+		glog.Errorf("mount of disk %s failed: %v", dir, err)
 		return err
 	}
 
@@ -365,7 +365,7 @@ func (b *flockerVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 		volume.SetVolumeOwnership(b, fsGroup)
 	}
 
-	klog.V(4).Infof("successfully mounted %s", dir)
+	glog.V(4).Infof("successfully mounted %s", dir)
 	return nil
 }
 
@@ -433,11 +433,11 @@ func (c *flockerVolumeUnmounter) TearDownAt(dir string) error {
 	return util.UnmountPath(dir, c.mounter)
 }
 
-func (p *flockerPlugin) NewDeleter(spec *volume.Spec) (volume.Deleter, error) {
-	return p.newDeleterInternal(spec, &flockerUtil{})
+func (plugin *flockerPlugin) NewDeleter(spec *volume.Spec) (volume.Deleter, error) {
+	return plugin.newDeleterInternal(spec, &FlockerUtil{})
 }
 
-func (p *flockerPlugin) newDeleterInternal(spec *volume.Spec, manager volumeManager) (volume.Deleter, error) {
+func (plugin *flockerPlugin) newDeleterInternal(spec *volume.Spec, manager volumeManager) (volume.Deleter, error) {
 	if spec.PersistentVolume != nil && spec.PersistentVolume.Spec.Flocker == nil {
 		return nil, fmt.Errorf("spec.PersistentVolumeSource.Flocker is nil")
 	}
@@ -450,15 +450,15 @@ func (p *flockerPlugin) newDeleterInternal(spec *volume.Spec, manager volumeMana
 		}}, nil
 }
 
-func (p *flockerPlugin) NewProvisioner(options volume.VolumeOptions) (volume.Provisioner, error) {
-	return p.newProvisionerInternal(options, &flockerUtil{})
+func (plugin *flockerPlugin) NewProvisioner(options volume.VolumeOptions) (volume.Provisioner, error) {
+	return plugin.newProvisionerInternal(options, &FlockerUtil{})
 }
 
-func (p *flockerPlugin) newProvisionerInternal(options volume.VolumeOptions, manager volumeManager) (volume.Provisioner, error) {
+func (plugin *flockerPlugin) newProvisionerInternal(options volume.VolumeOptions, manager volumeManager) (volume.Provisioner, error) {
 	return &flockerVolumeProvisioner{
 		flockerVolume: &flockerVolume{
 			manager: manager,
-			plugin:  p,
+			plugin:  plugin,
 		},
 		options: options,
 	}, nil

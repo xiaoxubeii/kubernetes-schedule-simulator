@@ -36,7 +36,7 @@ const (
 )
 
 var (
-	contextData = clientcmdapi.NewContext()
+	contextData *clientcmdapi.Context = clientcmdapi.NewContext()
 )
 
 type renameContextTest struct {

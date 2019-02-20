@@ -10,12 +10,16 @@ go_library(
     srcs = [
         "doc.go",
         "selinux.go",
-        "selinux_linux.go",
         "selinux_unsupported.go",
-    ],
+    ] + select({
+        "@io_bazel_rules_go//go/platform:linux_amd64": [
+            "selinux_linux.go",
+        ],
+        "//conditions:default": [],
+    }),
     importpath = "k8s.io/kubernetes/pkg/util/selinux",
     deps = select({
-        "@io_bazel_rules_go//go/platform:linux": [
+        "@io_bazel_rules_go//go/platform:linux_amd64": [
             "//vendor/github.com/opencontainers/selinux/go-selinux:go_default_library",
         ],
         "//conditions:default": [],

@@ -17,7 +17,6 @@ limitations under the License.
 package certificates
 
 import (
-	"context"
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,7 +51,7 @@ func (csrStrategy) AllowCreateOnUpdate() bool {
 
 // PrepareForCreate clears fields that are not allowed to be set by end users
 // on creation.
-func (csrStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
+func (csrStrategy) PrepareForCreate(ctx genericapirequest.Context, obj runtime.Object) {
 	csr := obj.(*certificates.CertificateSigningRequest)
 
 	// Clear any user-specified info
@@ -80,7 +79,7 @@ func (csrStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 
 // PrepareForUpdate clears fields that are not allowed to be set by end users
 // on update. Certificate requests are immutable after creation except via subresources.
-func (csrStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+func (csrStrategy) PrepareForUpdate(ctx genericapirequest.Context, obj, old runtime.Object) {
 	newCSR := obj.(*certificates.CertificateSigningRequest)
 	oldCSR := old.(*certificates.CertificateSigningRequest)
 
@@ -89,7 +88,7 @@ func (csrStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object
 }
 
 // Validate validates a new CSR. Validation must check for a correct signature.
-func (csrStrategy) Validate(ctx context.Context, obj runtime.Object) field.ErrorList {
+func (csrStrategy) Validate(ctx genericapirequest.Context, obj runtime.Object) field.ErrorList {
 	csr := obj.(*certificates.CertificateSigningRequest)
 	return validation.ValidateCertificateSigningRequest(csr)
 }
@@ -98,7 +97,7 @@ func (csrStrategy) Validate(ctx context.Context, obj runtime.Object) field.Error
 func (csrStrategy) Canonicalize(obj runtime.Object) {}
 
 // ValidateUpdate is the default update validation for an end user.
-func (csrStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+func (csrStrategy) ValidateUpdate(ctx genericapirequest.Context, obj, old runtime.Object) field.ErrorList {
 	oldCSR := old.(*certificates.CertificateSigningRequest)
 	newCSR := obj.(*certificates.CertificateSigningRequest)
 	return validation.ValidateCertificateSigningRequestUpdate(newCSR, oldCSR)
@@ -113,7 +112,7 @@ func (csrStrategy) AllowUnconditionalUpdate() bool {
 	return true
 }
 
-func (s csrStrategy) Export(ctx context.Context, obj runtime.Object, exact bool) error {
+func (s csrStrategy) Export(ctx genericapirequest.Context, obj runtime.Object, exact bool) error {
 	csr, ok := obj.(*certificates.CertificateSigningRequest)
 	if !ok {
 		// unexpected programmer error
@@ -135,7 +134,7 @@ type csrStatusStrategy struct {
 
 var StatusStrategy = csrStatusStrategy{Strategy}
 
-func (csrStatusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+func (csrStatusStrategy) PrepareForUpdate(ctx genericapirequest.Context, obj, old runtime.Object) {
 	newCSR := obj.(*certificates.CertificateSigningRequest)
 	oldCSR := old.(*certificates.CertificateSigningRequest)
 
@@ -151,7 +150,7 @@ func (csrStatusStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.
 	}
 }
 
-func (csrStatusStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+func (csrStatusStrategy) ValidateUpdate(ctx genericapirequest.Context, obj, old runtime.Object) field.ErrorList {
 	return validation.ValidateCertificateSigningRequestUpdate(obj.(*certificates.CertificateSigningRequest), old.(*certificates.CertificateSigningRequest))
 }
 
@@ -169,7 +168,7 @@ var ApprovalStrategy = csrApprovalStrategy{Strategy}
 // PrepareForUpdate prepares the new certificate signing request by limiting
 // the data that is updated to only the conditions. Also, if there is no
 // existing LastUpdateTime on a condition, the current date/time will be set.
-func (csrApprovalStrategy) PrepareForUpdate(ctx context.Context, obj, old runtime.Object) {
+func (csrApprovalStrategy) PrepareForUpdate(ctx genericapirequest.Context, obj, old runtime.Object) {
 	newCSR := obj.(*certificates.CertificateSigningRequest)
 	oldCSR := old.(*certificates.CertificateSigningRequest)
 
@@ -187,6 +186,6 @@ func (csrApprovalStrategy) PrepareForUpdate(ctx context.Context, obj, old runtim
 	newCSR.Status = oldCSR.Status
 }
 
-func (csrApprovalStrategy) ValidateUpdate(ctx context.Context, obj, old runtime.Object) field.ErrorList {
+func (csrApprovalStrategy) ValidateUpdate(ctx genericapirequest.Context, obj, old runtime.Object) field.ErrorList {
 	return validation.ValidateCertificateSigningRequestUpdate(obj.(*certificates.CertificateSigningRequest), old.(*certificates.CertificateSigningRequest))
 }

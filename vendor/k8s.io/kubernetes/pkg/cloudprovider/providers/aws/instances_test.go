@@ -17,17 +17,15 @@ limitations under the License.
 package aws
 
 import (
-	"testing"
-	"time"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/stretchr/testify/assert"
-
 	"k8s.io/api/core/v1"
+	"testing"
+	"time"
 )
 
-func TestMapToAWSInstanceIDs(t *testing.T) {
+func TestParseInstance(t *testing.T) {
 	tests := []struct {
 		Kubernetes  kubernetesInstanceID
 		Aws         awsInstanceID

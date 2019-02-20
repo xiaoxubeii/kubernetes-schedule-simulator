@@ -14,7 +14,7 @@ go_library(
     ],
     importpath = "k8s.io/kubernetes/pkg/util/netsh",
     deps = [
-        "//vendor/k8s.io/klog:go_default_library",
+        "//vendor/github.com/golang/glog:go_default_library",
         "//vendor/k8s.io/utils/exec:go_default_library",
     ],
 )
@@ -38,7 +38,8 @@ filegroup(
 go_test(
     name = "go_default_test",
     srcs = ["netsh_test.go"],
-    embed = [":go_default_library"],
+    importpath = "k8s.io/kubernetes/pkg/util/netsh",
+    library = ":go_default_library",
     deps = [
         "//vendor/github.com/pkg/errors:go_default_library",
         "//vendor/github.com/stretchr/testify/assert:go_default_library",

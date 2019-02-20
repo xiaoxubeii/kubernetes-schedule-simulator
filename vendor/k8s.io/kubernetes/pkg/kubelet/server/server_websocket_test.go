@@ -23,13 +23,11 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"golang.org/x/net/websocket"
 
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/kubernetes/pkg/kubelet/server/portforward"
 )
 
 const (
@@ -38,114 +36,152 @@ const (
 )
 
 func TestServeWSPortForward(t *testing.T) {
-	tests := map[string]struct {
+	tests := []struct {
 		port          string
 		uid           bool
 		clientData    string
 		containerData string
 		shouldError   bool
 	}{
-		"no port":                       {port: "", shouldError: true},
-		"none number port":              {port: "abc", shouldError: true},
-		"negative port":                 {port: "-1", shouldError: true},
-		"too large port":                {port: "65536", shouldError: true},
-		"0 port":                        {port: "0", shouldError: true},
-		"min port":                      {port: "1", shouldError: false},
-		"normal port":                   {port: "8000", shouldError: false},
-		"normal port with data forward": {port: "8000", clientData: "client data", containerData: "container data", shouldError: false},
-		"max port":                      {port: "65535", shouldError: false},
-		"normal port with uid":          {port: "8000", uid: true, shouldError: false},
+		{port: "", shouldError: true},
+		{port: "abc", shouldError: true},
+		{port: "-1", shouldError: true},
+		{port: "65536", shouldError: true},
+		{port: "0", shouldError: true},
+		{port: "1", shouldError: false},
+		{port: "8000", shouldError: false},
+		{port: "8000", clientData: "client data", containerData: "container data", shouldError: false},
+		{port: "65535", shouldError: false},
+		{port: "65535", uid: true, shouldError: false},
 	}
 
 	podNamespace := "other"
 	podName := "foo"
+	expectedPodName := getPodName(podName, podNamespace)
+	expectedUid := "9b01b80f-8fb4-11e4-95ab-4200af06647"
 
-	for desc, test := range tests {
-		test := test
-		t.Run(desc, func(t *testing.T) {
-			ss, err := newTestStreamingServer(0)
-			require.NoError(t, err)
-			defer ss.testHTTPServer.Close()
-			fw := newServerTestWithDebug(true, false, ss)
-			defer fw.testHTTPServer.Close()
+	for i, test := range tests {
+		fw := newServerTest()
+		defer fw.testHTTPServer.Close()
 
-			portForwardFuncDone := make(chan struct{})
+		fw.fakeKubelet.streamingConnectionIdleTimeoutFunc = func() time.Duration {
+			return 0
+		}
 
-			fw.fakeKubelet.getPortForwardCheck = func(name, namespace string, uid types.UID, opts portforward.V4Options) {
-				assert.Equal(t, podName, name, "pod name")
-				assert.Equal(t, podNamespace, namespace, "pod namespace")
-				if test.uid {
-					assert.Equal(t, testUID, string(uid), "uid")
-				}
+		portForwardFuncDone := make(chan struct{})
+
+		fw.fakeKubelet.portForwardFunc = func(name string, uid types.UID, port int32, stream io.ReadWriteCloser) error {
+			defer close(portForwardFuncDone)
+
+			if e, a := expectedPodName, name; e != a {
+				t.Fatalf("%d: pod name: expected '%v', got '%v'", i, e, a)
 			}
 
-			ss.fakeRuntime.portForwardFunc = func(podSandboxID string, port int32, stream io.ReadWriteCloser) error {
-				defer close(portForwardFuncDone)
-				assert.Equal(t, testPodSandboxID, podSandboxID, "pod sandbox id")
-				// The port should be valid if it reaches here.
-				testPort, err := strconv.ParseInt(test.port, 10, 32)
-				require.NoError(t, err, "parse port")
-				assert.Equal(t, int32(testPort), port, "port")
-
-				if test.clientData != "" {
-					fromClient := make([]byte, 32)
-					n, err := stream.Read(fromClient)
-					assert.NoError(t, err, "reading client data")
-					assert.Equal(t, test.clientData, string(fromClient[0:n]), "client data")
-				}
-
-				if test.containerData != "" {
-					_, err := stream.Write([]byte(test.containerData))
-					assert.NoError(t, err, "writing container data")
-				}
-
-				return nil
+			if e, a := expectedUid, uid; test.uid && e != string(a) {
+				t.Fatalf("%d: uid: expected '%v', got '%v'", i, e, a)
 			}
 
-			var url string
-			if test.uid {
-				url = fmt.Sprintf("ws://%s/portForward/%s/%s/%s?port=%s", fw.testHTTPServer.Listener.Addr().String(), podNamespace, podName, testUID, test.port)
-			} else {
-				url = fmt.Sprintf("ws://%s/portForward/%s/%s?port=%s", fw.testHTTPServer.Listener.Addr().String(), podNamespace, podName, test.port)
+			p, err := strconv.ParseInt(test.port, 10, 32)
+			if err != nil {
+				t.Fatalf("%d: error parsing port string '%s': %v", i, test.port, err)
 			}
-
-			ws, err := websocket.Dial(url, "", "http://127.0.0.1/")
-			assert.Equal(t, test.shouldError, err != nil, "websocket dial")
-			if test.shouldError {
-				return
+			if e, a := int32(p), port; e != a {
+				t.Fatalf("%d: port: expected '%v', got '%v'", i, e, a)
 			}
-			defer ws.Close()
-
-			p, err := strconv.ParseUint(test.port, 10, 16)
-			require.NoError(t, err, "parse port")
-			p16 := uint16(p)
-
-			channel, data, err := wsRead(ws)
-			require.NoError(t, err, "read")
-			assert.Equal(t, dataChannel, int(channel), "channel")
-			assert.Len(t, data, binary.Size(p16), "data size")
-			assert.Equal(t, p16, binary.LittleEndian.Uint16(data), "data")
-
-			channel, data, err = wsRead(ws)
-			assert.NoError(t, err, "read")
-			assert.Equal(t, errorChannel, int(channel), "channel")
-			assert.Len(t, data, binary.Size(p16), "data size")
-			assert.Equal(t, p16, binary.LittleEndian.Uint16(data), "data")
 
 			if test.clientData != "" {
-				println("writing the client data")
-				err := wsWrite(ws, dataChannel, []byte(test.clientData))
-				assert.NoError(t, err, "writing client data")
+				fromClient := make([]byte, 32)
+				n, err := stream.Read(fromClient)
+				if err != nil {
+					t.Fatalf("%d: error reading client data: %v", i, err)
+				}
+				if e, a := test.clientData, string(fromClient[0:n]); e != a {
+					t.Fatalf("%d: client data: expected to receive '%v', got '%v'", i, e, a)
+				}
 			}
 
 			if test.containerData != "" {
-				_, data, err = wsRead(ws)
-				assert.NoError(t, err, "reading container data")
-				assert.Equal(t, test.containerData, string(data), "container data")
+				_, err := stream.Write([]byte(test.containerData))
+				if err != nil {
+					t.Fatalf("%d: error writing container data: %v", i, err)
+				}
 			}
 
-			<-portForwardFuncDone
-		})
+			return nil
+		}
+
+		var url string
+		if test.uid {
+			url = fmt.Sprintf("ws://%s/portForward/%s/%s/%s?port=%s", fw.testHTTPServer.Listener.Addr().String(), podNamespace, podName, expectedUid, test.port)
+		} else {
+			url = fmt.Sprintf("ws://%s/portForward/%s/%s?port=%s", fw.testHTTPServer.Listener.Addr().String(), podNamespace, podName, test.port)
+		}
+
+		ws, err := websocket.Dial(url, "", "http://127.0.0.1/")
+		if test.shouldError {
+			if err == nil {
+				t.Fatalf("%d: websocket dial expected err", i)
+			}
+			continue
+		} else if err != nil {
+			t.Fatalf("%d: websocket dial unexpected err: %v", i, err)
+		}
+
+		defer ws.Close()
+
+		p, err := strconv.ParseUint(test.port, 10, 16)
+		if err != nil {
+			t.Fatalf("%d: error parsing port string '%s': %v", i, test.port, err)
+		}
+		p16 := uint16(p)
+
+		channel, data, err := wsRead(ws)
+		if err != nil {
+			t.Fatalf("%d: read failed: expected no error: got %v", i, err)
+		}
+		if channel != dataChannel {
+			t.Fatalf("%d: wrong channel: got %q: expected %q", i, channel, dataChannel)
+		}
+		if len(data) != binary.Size(p16) {
+			t.Fatalf("%d: wrong data size: got %q: expected %d", i, data, binary.Size(p16))
+		}
+		if e, a := p16, binary.LittleEndian.Uint16(data); e != a {
+			t.Fatalf("%d: wrong data: got %q: expected %s", i, data, test.port)
+		}
+
+		channel, data, err = wsRead(ws)
+		if err != nil {
+			t.Fatalf("%d: read succeeded: expected no error: got %v", i, err)
+		}
+		if channel != errorChannel {
+			t.Fatalf("%d: wrong channel: got %q: expected %q", i, channel, errorChannel)
+		}
+		if len(data) != binary.Size(p16) {
+			t.Fatalf("%d: wrong data size: got %q: expected %d", i, data, binary.Size(p16))
+		}
+		if e, a := p16, binary.LittleEndian.Uint16(data); e != a {
+			t.Fatalf("%d: wrong data: got %q: expected %s", i, data, test.port)
+		}
+
+		if test.clientData != "" {
+			println("writing the client data")
+			err := wsWrite(ws, dataChannel, []byte(test.clientData))
+			if err != nil {
+				t.Fatalf("%d: unexpected error writing client data: %v", i, err)
+			}
+		}
+
+		if test.containerData != "" {
+			_, data, err = wsRead(ws)
+			if err != nil {
+				t.Fatalf("%d: unexpected error reading container data: %v", i, err)
+			}
+			if e, a := test.containerData, string(data); e != a {
+				t.Fatalf("%d: expected to receive '%v' from container, got '%v'", i, e, a)
+			}
+		}
+
+		<-portForwardFuncDone
 	}
 }
 
@@ -154,12 +190,14 @@ func TestServeWSMultiplePortForward(t *testing.T) {
 	ports := []uint16{7000, 8000, 9000}
 	podNamespace := "other"
 	podName := "foo"
+	expectedPodName := getPodName(podName, podNamespace)
 
-	ss, err := newTestStreamingServer(0)
-	require.NoError(t, err)
-	defer ss.testHTTPServer.Close()
-	fw := newServerTestWithDebug(true, false, ss)
+	fw := newServerTest()
 	defer fw.testHTTPServer.Close()
+
+	fw.fakeKubelet.streamingConnectionIdleTimeoutFunc = func() time.Duration {
+		return 0
+	}
 
 	portForwardWG := sync.WaitGroup{}
 	portForwardWG.Add(len(ports))
@@ -167,14 +205,12 @@ func TestServeWSMultiplePortForward(t *testing.T) {
 	portsMutex := sync.Mutex{}
 	portsForwarded := map[int32]struct{}{}
 
-	fw.fakeKubelet.getPortForwardCheck = func(name, namespace string, uid types.UID, opts portforward.V4Options) {
-		assert.Equal(t, podName, name, "pod name")
-		assert.Equal(t, podNamespace, namespace, "pod namespace")
-	}
-
-	ss.fakeRuntime.portForwardFunc = func(podSandboxID string, port int32, stream io.ReadWriteCloser) error {
+	fw.fakeKubelet.portForwardFunc = func(name string, uid types.UID, port int32, stream io.ReadWriteCloser) error {
 		defer portForwardWG.Done()
-		assert.Equal(t, testPodSandboxID, podSandboxID, "pod sandbox id")
+
+		if e, a := expectedPodName, name; e != a {
+			t.Fatalf("%d: pod name: expected '%v', got '%v'", port, e, a)
+		}
 
 		portsMutex.Lock()
 		portsForwarded[port] = struct{}{}
@@ -182,11 +218,17 @@ func TestServeWSMultiplePortForward(t *testing.T) {
 
 		fromClient := make([]byte, 32)
 		n, err := stream.Read(fromClient)
-		assert.NoError(t, err, "reading client data")
-		assert.Equal(t, fmt.Sprintf("client data on port %d", port), string(fromClient[0:n]), "client data")
+		if err != nil {
+			t.Fatalf("%d: error reading client data: %v", port, err)
+		}
+		if e, a := fmt.Sprintf("client data on port %d", port), string(fromClient[0:n]); e != a {
+			t.Fatalf("%d: client data: expected to receive '%v', got '%v'", port, e, a)
+		}
 
 		_, err = stream.Write([]byte(fmt.Sprintf("container data on port %d", port)))
-		assert.NoError(t, err, "writing container data")
+		if err != nil {
+			t.Fatalf("%d: error writing container data: %v", port, err)
+		}
 
 		return nil
 	}
@@ -197,42 +239,70 @@ func TestServeWSMultiplePortForward(t *testing.T) {
 	}
 
 	ws, err := websocket.Dial(url, "", "http://127.0.0.1/")
-	require.NoError(t, err, "websocket dial")
+	if err != nil {
+		t.Fatalf("websocket dial unexpected err: %v", err)
+	}
 
 	defer ws.Close()
 
 	for i, port := range ports {
 		channel, data, err := wsRead(ws)
-		assert.NoError(t, err, "port %d read", port)
-		assert.Equal(t, i*2+dataChannel, int(channel), "port %d channel", port)
-		assert.Len(t, data, binary.Size(port), "port %d data size", port)
-		assert.Equal(t, binary.LittleEndian.Uint16(data), port, "port %d data", port)
+		if err != nil {
+			t.Fatalf("%d: read failed: expected no error: got %v", i, err)
+		}
+		if int(channel) != i*2+dataChannel {
+			t.Fatalf("%d: wrong channel: got %q: expected %q", i, channel, i*2+dataChannel)
+		}
+		if len(data) != binary.Size(port) {
+			t.Fatalf("%d: wrong data size: got %q: expected %d", i, data, binary.Size(port))
+		}
+		if e, a := port, binary.LittleEndian.Uint16(data); e != a {
+			t.Fatalf("%d: wrong data: got %q: expected %d", i, data, port)
+		}
 
 		channel, data, err = wsRead(ws)
-		assert.NoError(t, err, "port %d read", port)
-		assert.Equal(t, i*2+errorChannel, int(channel), "port %d channel", port)
-		assert.Len(t, data, binary.Size(port), "port %d data size", port)
-		assert.Equal(t, binary.LittleEndian.Uint16(data), port, "port %d data", port)
+		if err != nil {
+			t.Fatalf("%d: read succeeded: expected no error: got %v", i, err)
+		}
+		if int(channel) != i*2+errorChannel {
+			t.Fatalf("%d: wrong channel: got %q: expected %q", i, channel, i*2+errorChannel)
+		}
+		if len(data) != binary.Size(port) {
+			t.Fatalf("%d: wrong data size: got %q: expected %d", i, data, binary.Size(port))
+		}
+		if e, a := port, binary.LittleEndian.Uint16(data); e != a {
+			t.Fatalf("%d: wrong data: got %q: expected %d", i, data, port)
+		}
 	}
 
 	for i, port := range ports {
-		t.Logf("port %d writing the client data", port)
+		println("writing the client data", port)
 		err := wsWrite(ws, byte(i*2+dataChannel), []byte(fmt.Sprintf("client data on port %d", port)))
-		assert.NoError(t, err, "port %d write client data", port)
+		if err != nil {
+			t.Fatalf("%d: unexpected error writing client data: %v", i, err)
+		}
 
 		channel, data, err := wsRead(ws)
-		assert.NoError(t, err, "port %d read container data", port)
-		assert.Equal(t, i*2+dataChannel, int(channel), "port %d channel", port)
-		assert.Equal(t, fmt.Sprintf("container data on port %d", port), string(data), "port %d container data", port)
+		if err != nil {
+			t.Fatalf("%d: unexpected error reading container data: %v", i, err)
+		}
+
+		if int(channel) != i*2+dataChannel {
+			t.Fatalf("%d: wrong channel: got %q: expected %q", port, channel, i*2+dataChannel)
+		}
+		if e, a := fmt.Sprintf("container data on port %d", port), string(data); e != a {
+			t.Fatalf("%d: expected to receive '%v' from container, got '%v'", i, e, a)
+		}
 	}
 
 	portForwardWG.Wait()
 
 	portsMutex.Lock()
 	defer portsMutex.Unlock()
-	assert.Len(t, portsForwarded, len(ports), "all ports forwarded")
+	if len(ports) != len(portsForwarded) {
+		t.Fatalf("expected to forward %d ports; got %v", len(ports), portsForwarded)
+	}
 }
-
 func wsWrite(conn *websocket.Conn, channel byte, data []byte) error {
 	frame := make([]byte, len(data)+1)
 	frame[0] = channel

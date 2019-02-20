@@ -79,8 +79,8 @@ func (r LoadBalancerPage) NextPageURL() (string, error) {
 }
 
 // IsEmpty checks whether a LoadBalancerPage struct is empty.
-func (r LoadBalancerPage) IsEmpty() (bool, error) {
-	is, err := ExtractLoadBalancers(r)
+func (p LoadBalancerPage) IsEmpty() (bool, error) {
+	is, err := ExtractLoadBalancers(p)
 	return len(is) == 0, err
 }
 

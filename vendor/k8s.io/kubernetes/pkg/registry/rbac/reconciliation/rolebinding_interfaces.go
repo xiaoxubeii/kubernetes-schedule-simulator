@@ -17,19 +17,21 @@ limitations under the License.
 package reconciliation
 
 import (
-	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	rbacv1client "k8s.io/client-go/kubernetes/typed/rbac/v1"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/rbac"
+	core "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/rbac/internalversion"
 )
 
 // +k8s:deepcopy-gen=true
 // +k8s:deepcopy-gen:interfaces=k8s.io/kubernetes/pkg/registry/rbac/reconciliation.RoleBinding
 // +k8s:deepcopy-gen:nonpointer-interfaces=true
 type RoleBindingAdapter struct {
-	RoleBinding *rbacv1.RoleBinding
+	RoleBinding *rbac.RoleBinding
 }
 
 func (o RoleBindingAdapter) GetObject() runtime.Object {
@@ -64,21 +66,21 @@ func (o RoleBindingAdapter) SetAnnotations(in map[string]string) {
 	o.RoleBinding.Annotations = in
 }
 
-func (o RoleBindingAdapter) GetRoleRef() rbacv1.RoleRef {
+func (o RoleBindingAdapter) GetRoleRef() rbac.RoleRef {
 	return o.RoleBinding.RoleRef
 }
 
-func (o RoleBindingAdapter) GetSubjects() []rbacv1.Subject {
+func (o RoleBindingAdapter) GetSubjects() []rbac.Subject {
 	return o.RoleBinding.Subjects
 }
 
-func (o RoleBindingAdapter) SetSubjects(in []rbacv1.Subject) {
+func (o RoleBindingAdapter) SetSubjects(in []rbac.Subject) {
 	o.RoleBinding.Subjects = in
 }
 
 type RoleBindingClientAdapter struct {
-	Client          rbacv1client.RoleBindingsGetter
-	NamespaceClient corev1client.NamespaceInterface
+	Client          internalversion.RoleBindingsGetter
+	NamespaceClient core.NamespaceInterface
 }
 
 func (c RoleBindingClientAdapter) Get(namespace, name string) (RoleBinding, error) {
@@ -90,7 +92,8 @@ func (c RoleBindingClientAdapter) Get(namespace, name string) (RoleBinding, erro
 }
 
 func (c RoleBindingClientAdapter) Create(in RoleBinding) (RoleBinding, error) {
-	if err := tryEnsureNamespace(c.NamespaceClient, in.GetNamespace()); err != nil {
+	ns := &api.Namespace{ObjectMeta: metav1.ObjectMeta{Name: in.GetNamespace()}}
+	if _, err := c.NamespaceClient.Create(ns); err != nil && !apierrors.IsAlreadyExists(err) {
 		return nil, err
 	}
 

@@ -20,16 +20,15 @@ import (
 	"fmt"
 	"os"
 
-	volumeclient "github.com/libopenstorage/openstorage/api/client/volume"
+	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/util/mount"
 	kstrings "k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util"
+	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
 )
 
 const (
@@ -44,14 +43,13 @@ func ProbeVolumePlugins() []volume.VolumePlugin {
 
 type portworxVolumePlugin struct {
 	host volume.VolumeHost
-	util *portworxVolumeUtil
+	util *PortworxVolumeUtil
 }
 
 var _ volume.VolumePlugin = &portworxVolumePlugin{}
 var _ volume.PersistentVolumePlugin = &portworxVolumePlugin{}
 var _ volume.DeletableVolumePlugin = &portworxVolumePlugin{}
 var _ volume.ProvisionableVolumePlugin = &portworxVolumePlugin{}
-var _ volume.ExpandableVolumePlugin = &portworxVolumePlugin{}
 
 const (
 	portworxVolumePluginName = "kubernetes.io/portworx-volume"
@@ -62,18 +60,8 @@ func getPath(uid types.UID, volName string, host volume.VolumeHost) string {
 }
 
 func (plugin *portworxVolumePlugin) Init(host volume.VolumeHost) error {
-	client, err := volumeclient.NewDriverClient(
-		fmt.Sprintf("http://%s:%d", host.GetHostName(), osdMgmtDefaultPort),
-		pxdDriverName, osdDriverVersion, pxDriverName)
-	if err != nil {
-		return err
-	}
-
 	plugin.host = host
-	plugin.util = &portworxVolumeUtil{
-		portworxClient: client,
-	}
-
+	plugin.util = &PortworxVolumeUtil{}
 	return nil
 }
 
@@ -131,7 +119,7 @@ func (plugin *portworxVolumePlugin) newMounterInternal(spec *volume.Spec, podUID
 		},
 		fsType:      fsType,
 		readOnly:    readOnly,
-		diskMounter: util.NewSafeFormatAndMountFromHost(plugin.GetPluginName(), plugin.host)}, nil
+		diskMounter: volumehelper.NewSafeFormatAndMountFromHost(plugin.GetPluginName(), plugin.host)}, nil
 }
 
 func (plugin *portworxVolumePlugin) NewUnmounter(volName string, podUID types.UID) (volume.Unmounter, error) {
@@ -183,24 +171,6 @@ func (plugin *portworxVolumePlugin) newProvisionerInternal(options volume.Volume
 	}, nil
 }
 
-func (plugin *portworxVolumePlugin) RequiresFSResize() bool {
-	return false
-}
-
-func (plugin *portworxVolumePlugin) ExpandVolumeDevice(
-	spec *volume.Spec,
-	newSize resource.Quantity,
-	oldSize resource.Quantity) (resource.Quantity, error) {
-	klog.V(4).Infof("Expanding: %s from %v to %v", spec.Name(), oldSize, newSize)
-	err := plugin.util.ResizeVolume(spec, newSize, plugin.host)
-	if err != nil {
-		return oldSize, err
-	}
-
-	klog.V(4).Infof("Successfully resized %s to %v", spec.Name(), newSize)
-	return newSize, nil
-}
-
 func (plugin *portworxVolumePlugin) ConstructVolumeSpec(volumeName, mountPath string) (*volume.Spec, error) {
 	portworxVolume := &v1.Volume{
 		Name: volumeName,
@@ -236,7 +206,7 @@ func getVolumeSource(
 // Abstract interface to PD operations.
 type portworxManager interface {
 	// Creates a volume
-	CreateVolume(provisioner *portworxVolumeProvisioner) (volumeID string, volumeSizeGB int64, labels map[string]string, err error)
+	CreateVolume(provisioner *portworxVolumeProvisioner) (volumeID string, volumeSizeGB int, labels map[string]string, err error)
 	// Deletes a volume
 	DeleteVolume(deleter *portworxVolumeDeleter) error
 	// Attach a volume
@@ -247,8 +217,6 @@ type portworxManager interface {
 	MountVolume(mounter *portworxVolumeMounter, mountDir string) error
 	// Unmount a volume
 	UnmountVolume(unmounter *portworxVolumeUnmounter, mountDir string) error
-	// Resize a volume
-	ResizeVolume(spec *volume.Spec, newSize resource.Quantity, host volume.VolumeHost) error
 }
 
 // portworxVolume volumes are portworx block devices
@@ -280,9 +248,10 @@ var _ volume.Mounter = &portworxVolumeMounter{}
 
 func (b *portworxVolumeMounter) GetAttributes() volume.Attributes {
 	return volume.Attributes{
-		ReadOnly:        b.readOnly,
-		Managed:         !b.readOnly,
-		SupportsSELinux: false,
+		ReadOnly: b.readOnly,
+		Managed:  !b.readOnly,
+		// true ?
+		SupportsSELinux: true,
 	}
 }
 
@@ -301,9 +270,9 @@ func (b *portworxVolumeMounter) SetUp(fsGroup *int64) error {
 // SetUpAt attaches the disk and bind mounts to the volume path.
 func (b *portworxVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 	notMnt, err := b.mounter.IsLikelyNotMountPoint(dir)
-	klog.Infof("Portworx Volume set up. Dir: %s %v %v", dir, !notMnt, err)
+	glog.Infof("Portworx Volume set up. Dir: %s %v %v", dir, !notMnt, err)
 	if err != nil && !os.IsNotExist(err) {
-		klog.Errorf("Cannot validate mountpoint: %s", dir)
+		glog.Errorf("Cannot validate mountpoint: %s", dir)
 		return err
 	}
 	if !notMnt {
@@ -317,7 +286,7 @@ func (b *portworxVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 		return err
 	}
 
-	klog.V(4).Infof("Portworx Volume %s attached", b.volumeID)
+	glog.V(4).Infof("Portworx Volume %s attached", b.volumeID)
 
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
@@ -329,7 +298,7 @@ func (b *portworxVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 	if !b.readOnly {
 		volume.SetVolumeOwnership(b, fsGroup)
 	}
-	klog.Infof("Portworx Volume %s setup at %s", b.volumeID, dir)
+	glog.Infof("Portworx Volume %s setup at %s", b.volumeID, dir)
 	return nil
 }
 
@@ -352,7 +321,7 @@ func (c *portworxVolumeUnmounter) TearDown() error {
 // Unmounts the bind mount, and detaches the disk only if the PD
 // resource was the last reference to that disk on the kubelet.
 func (c *portworxVolumeUnmounter) TearDownAt(dir string) error {
-	klog.Infof("Portworx Volume TearDown of %s", dir)
+	glog.Infof("Portworx Volume TearDown of %s", dir)
 
 	if err := c.manager.UnmountVolume(c, dir); err != nil {
 		return err
@@ -388,16 +357,12 @@ type portworxVolumeProvisioner struct {
 
 var _ volume.Provisioner = &portworxVolumeProvisioner{}
 
-func (c *portworxVolumeProvisioner) Provision(selectedNode *v1.Node, allowedTopologies []v1.TopologySelectorTerm) (*v1.PersistentVolume, error) {
-	if !util.AccessModesContainedInAll(c.plugin.GetAccessModes(), c.options.PVC.Spec.AccessModes) {
+func (c *portworxVolumeProvisioner) Provision() (*v1.PersistentVolume, error) {
+	if !volume.AccessModesContainedInAll(c.plugin.GetAccessModes(), c.options.PVC.Spec.AccessModes) {
 		return nil, fmt.Errorf("invalid AccessModes %v: only AccessModes %v are supported", c.options.PVC.Spec.AccessModes, c.plugin.GetAccessModes())
 	}
 
-	if util.CheckPersistentVolumeClaimModeBlock(c.options.PVC) {
-		return nil, fmt.Errorf("%s does not support block volume provisioning", c.plugin.GetPluginName())
-	}
-
-	volumeID, sizeGiB, labels, err := c.manager.CreateVolume(c)
+	volumeID, sizeGB, labels, err := c.manager.CreateVolume(c)
 	if err != nil {
 		return nil, err
 	}
@@ -407,14 +372,14 @@ func (c *portworxVolumeProvisioner) Provision(selectedNode *v1.Node, allowedTopo
 			Name:   c.options.PVName,
 			Labels: map[string]string{},
 			Annotations: map[string]string{
-				util.VolumeDynamicallyCreatedByKey: "portworx-volume-dynamic-provisioner",
+				volumehelper.VolumeDynamicallyCreatedByKey: "portworx-volume-dynamic-provisioner",
 			},
 		},
 		Spec: v1.PersistentVolumeSpec{
 			PersistentVolumeReclaimPolicy: c.options.PersistentVolumeReclaimPolicy,
 			AccessModes:                   c.options.PVC.Spec.AccessModes,
 			Capacity: v1.ResourceList{
-				v1.ResourceName(v1.ResourceStorage): resource.MustParse(fmt.Sprintf("%dGi", sizeGiB)),
+				v1.ResourceName(v1.ResourceStorage): resource.MustParse(fmt.Sprintf("%dGi", sizeGB)),
 			},
 			PersistentVolumeSource: v1.PersistentVolumeSource{
 				PortworxVolume: &v1.PortworxVolumeSource{

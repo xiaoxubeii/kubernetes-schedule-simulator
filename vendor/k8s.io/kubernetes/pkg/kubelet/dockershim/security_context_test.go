@@ -25,19 +25,17 @@ import (
 	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/stretchr/testify/assert"
 
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 )
 
 func TestModifyContainerConfig(t *testing.T) {
 	var uid int64 = 123
 	var username = "testuser"
-	var gid int64 = 423
 
 	cases := []struct {
 		name     string
 		sc       *runtimeapi.LinuxContainerSecurityContext
 		expected *dockercontainer.Config
-		isErr    bool
 	}{
 		{
 			name: "container.SecurityContext.RunAsUser set",
@@ -47,7 +45,6 @@ func TestModifyContainerConfig(t *testing.T) {
 			expected: &dockercontainer.Config{
 				User: strconv.FormatInt(uid, 10),
 			},
-			isErr: false,
 		},
 		{
 			name: "container.SecurityContext.RunAsUsername set",
@@ -57,104 +54,28 @@ func TestModifyContainerConfig(t *testing.T) {
 			expected: &dockercontainer.Config{
 				User: username,
 			},
-			isErr: false,
 		},
-		{
-			name: "container.SecurityContext.RunAsUsername and container.SecurityContext.RunAsUser set",
-			sc: &runtimeapi.LinuxContainerSecurityContext{
-				RunAsUsername: username,
-				RunAsUser:     &runtimeapi.Int64Value{Value: uid},
-			},
-			expected: &dockercontainer.Config{
-				User: username,
-			},
-			isErr: false,
-		},
-
 		{
 			name:     "no RunAsUser value set",
 			sc:       &runtimeapi.LinuxContainerSecurityContext{},
 			expected: &dockercontainer.Config{},
-			isErr:    false,
-		},
-		{
-			name: "RunAsUser value set, RunAsGroup set",
-			sc: &runtimeapi.LinuxContainerSecurityContext{
-				RunAsUser:  &runtimeapi.Int64Value{Value: uid},
-				RunAsGroup: &runtimeapi.Int64Value{Value: gid},
-			},
-			expected: &dockercontainer.Config{
-				User: "123:423",
-			},
-			isErr: false,
-		},
-		{
-			name: "RunAsUsername value set, RunAsGroup set",
-			sc: &runtimeapi.LinuxContainerSecurityContext{
-				RunAsUsername: username,
-				RunAsGroup:    &runtimeapi.Int64Value{Value: gid},
-			},
-			expected: &dockercontainer.Config{
-				User: "testuser:423",
-			},
-			isErr: false,
-		},
-		{
-			name: "RunAsUser/RunAsUsername not set, RunAsGroup set",
-			sc: &runtimeapi.LinuxContainerSecurityContext{
-				RunAsGroup: &runtimeapi.Int64Value{Value: gid},
-			},
-			isErr: true,
-		},
-		{
-			name: "RunAsUser/RunAsUsername both set, RunAsGroup set",
-			sc: &runtimeapi.LinuxContainerSecurityContext{
-				RunAsUser:     &runtimeapi.Int64Value{Value: uid},
-				RunAsUsername: username,
-				RunAsGroup:    &runtimeapi.Int64Value{Value: gid},
-			},
-			expected: &dockercontainer.Config{
-				User: "testuser:423",
-			},
-			isErr: false,
 		},
 	}
 
 	for _, tc := range cases {
 		dockerCfg := &dockercontainer.Config{}
-		err := modifyContainerConfig(tc.sc, dockerCfg)
-		if tc.isErr {
-			assert.NotNil(t, err)
-		} else {
-			assert.Nil(t, err)
-			assert.Equal(t, tc.expected, dockerCfg, "[Test case %q]", tc.name)
-		}
+		modifyContainerConfig(tc.sc, dockerCfg)
+		assert.Equal(t, tc.expected, dockerCfg, "[Test case %q]", tc.name)
 	}
 }
 
 func TestModifyHostConfig(t *testing.T) {
 	setNetworkHC := &dockercontainer.HostConfig{}
-
-	// When we have Privileged pods, we do not need to use the
-	// Masked / Readonly paths.
 	setPrivSC := &runtimeapi.LinuxContainerSecurityContext{}
 	setPrivSC.Privileged = true
-	setPrivSC.MaskedPaths = []string{"/hello/world/masked"}
-	setPrivSC.ReadonlyPaths = []string{"/hello/world/readonly"}
 	setPrivHC := &dockercontainer.HostConfig{
 		Privileged: true,
 	}
-
-	unsetPrivSC := &runtimeapi.LinuxContainerSecurityContext{}
-	unsetPrivSC.Privileged = false
-	unsetPrivSC.MaskedPaths = []string{"/hello/world/masked"}
-	unsetPrivSC.ReadonlyPaths = []string{"/hello/world/readonly"}
-	unsetPrivHC := &dockercontainer.HostConfig{
-		Privileged:    false,
-		MaskedPaths:   []string{"/hello/world/masked"},
-		ReadonlyPaths: []string{"/hello/world/readonly"},
-	}
-
 	setCapsHC := &dockercontainer.HostConfig{
 		CapAdd:  []string{"addCapA", "addCapB"},
 		CapDrop: []string{"dropCapA", "dropCapB"},
@@ -187,11 +108,6 @@ func TestModifyHostConfig(t *testing.T) {
 			name:     "container.SecurityContext.Privileged",
 			sc:       setPrivSC,
 			expected: setPrivHC,
-		},
-		{
-			name:     "container.SecurityContext.NoPrivileges",
-			sc:       unsetPrivSC,
-			expected: unsetPrivHC,
 		},
 		{
 			name: "container.SecurityContext.Capabilities",
@@ -312,24 +228,25 @@ func TestModifyHostConfigAndNamespaceOptionsForContainer(t *testing.T) {
 }
 
 func TestModifySandboxNamespaceOptions(t *testing.T) {
+	set := true
 	cases := []struct {
 		name     string
 		nsOpt    *runtimeapi.NamespaceOption
 		expected *dockercontainer.HostConfig
 	}{
 		{
-			name: "Host Network NamespaceOption",
+			name: "NamespaceOption.HostNetwork",
 			nsOpt: &runtimeapi.NamespaceOption{
-				Network: runtimeapi.NamespaceMode_NODE,
+				HostNetwork: set,
 			},
 			expected: &dockercontainer.HostConfig{
 				NetworkMode: namespaceModeHost,
 			},
 		},
 		{
-			name: "Host IPC NamespaceOption",
+			name: "NamespaceOption.HostIpc",
 			nsOpt: &runtimeapi.NamespaceOption{
-				Ipc: runtimeapi.NamespaceMode_NODE,
+				HostIpc: set,
 			},
 			expected: &dockercontainer.HostConfig{
 				IpcMode:     namespaceModeHost,
@@ -337,9 +254,9 @@ func TestModifySandboxNamespaceOptions(t *testing.T) {
 			},
 		},
 		{
-			name: "Host PID NamespaceOption",
+			name: "NamespaceOption.HostPid",
 			nsOpt: &runtimeapi.NamespaceOption{
-				Pid: runtimeapi.NamespaceMode_NODE,
+				HostPid: set,
 			},
 			expected: &dockercontainer.HostConfig{
 				PidMode:     namespaceModeHost,
@@ -355,6 +272,7 @@ func TestModifySandboxNamespaceOptions(t *testing.T) {
 }
 
 func TestModifyContainerNamespaceOptions(t *testing.T) {
+	set := true
 	sandboxID := "sandbox"
 	sandboxNSMode := fmt.Sprintf("container:%v", sandboxID)
 	cases := []struct {
@@ -363,9 +281,9 @@ func TestModifyContainerNamespaceOptions(t *testing.T) {
 		expected *dockercontainer.HostConfig
 	}{
 		{
-			name: "Host Network NamespaceOption",
+			name: "NamespaceOption.HostNetwork",
 			nsOpt: &runtimeapi.NamespaceOption{
-				Network: runtimeapi.NamespaceMode_NODE,
+				HostNetwork: set,
 			},
 			expected: &dockercontainer.HostConfig{
 				NetworkMode: dockercontainer.NetworkMode(sandboxNSMode),
@@ -375,9 +293,9 @@ func TestModifyContainerNamespaceOptions(t *testing.T) {
 			},
 		},
 		{
-			name: "Host IPC NamespaceOption",
+			name: "NamespaceOption.HostIpc",
 			nsOpt: &runtimeapi.NamespaceOption{
-				Ipc: runtimeapi.NamespaceMode_NODE,
+				HostIpc: set,
 			},
 			expected: &dockercontainer.HostConfig{
 				NetworkMode: dockercontainer.NetworkMode(sandboxNSMode),
@@ -386,9 +304,9 @@ func TestModifyContainerNamespaceOptions(t *testing.T) {
 			},
 		},
 		{
-			name: "Host PID NamespaceOption",
+			name: "NamespaceOption.HostPid",
 			nsOpt: &runtimeapi.NamespaceOption{
-				Pid: runtimeapi.NamespaceMode_NODE,
+				HostPid: set,
 			},
 			expected: &dockercontainer.HostConfig{
 				NetworkMode: dockercontainer.NetworkMode(sandboxNSMode),
@@ -407,49 +325,56 @@ func TestModifyContainerNamespaceOptions(t *testing.T) {
 func TestModifyContainerNamespacePIDOverride(t *testing.T) {
 	cases := []struct {
 		name            string
+		disable         bool
 		version         *semver.Version
 		input, expected dockercontainer.PidMode
 	}{
 		{
-			name:     "mode:CONTAINER docker:NEW",
-			version:  &semver.Version{Major: 1, Minor: 26},
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "mode:CONTAINER docker:OLD",
-			version:  &semver.Version{Major: 1, Minor: 25},
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "mode:HOST docker:NEW",
-			version:  &semver.Version{Major: 1, Minor: 26},
-			input:    "host",
-			expected: "host",
-		},
-		{
-			name:     "mode:HOST docker:OLD",
-			version:  &semver.Version{Major: 1, Minor: 25},
-			input:    "host",
-			expected: "host",
-		},
-		{
-			name:     "mode:POD docker:NEW",
+			name:     "SharedPID.Enable",
+			disable:  false,
 			version:  &semver.Version{Major: 1, Minor: 26},
 			input:    "container:sandbox",
 			expected: "container:sandbox",
 		},
 		{
-			name:     "mode:POD docker:OLD",
+			name:     "SharedPID.Disable",
+			disable:  true,
+			version:  &semver.Version{Major: 1, Minor: 26},
+			input:    "container:sandbox",
+			expected: "",
+		},
+		{
+			name:     "SharedPID.OldDocker",
+			disable:  false,
 			version:  &semver.Version{Major: 1, Minor: 25},
 			input:    "container:sandbox",
+			expected: "",
+		},
+		{
+			name:     "SharedPID.HostPid",
+			disable:  true,
+			version:  &semver.Version{Major: 1, Minor: 27},
+			input:    "host",
+			expected: "host",
+		},
+		{
+			name:     "SharedPID.DistantFuture",
+			disable:  false,
+			version:  &semver.Version{Major: 2, Minor: 10},
+			input:    "container:sandbox",
+			expected: "container:sandbox",
+		},
+		{
+			name:     "SharedPID.EmptyPidMode",
+			disable:  true,
+			version:  &semver.Version{Major: 1, Minor: 25},
+			input:    "",
 			expected: "",
 		},
 	}
 	for _, tc := range cases {
 		dockerCfg := &dockercontainer.HostConfig{PidMode: tc.input}
-		modifyContainerPIDNamespaceOverrides(tc.version, dockerCfg, "sandbox")
+		modifyPIDNamespaceOverrides(tc.disable, tc.version, dockerCfg)
 		assert.Equal(t, tc.expected, dockerCfg.PidMode, "[Test case %q]", tc.name)
 	}
 }

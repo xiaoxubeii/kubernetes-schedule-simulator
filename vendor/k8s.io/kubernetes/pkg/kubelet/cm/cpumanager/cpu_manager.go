@@ -22,17 +22,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/glog"
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog"
 
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 	"k8s.io/kubernetes/pkg/kubelet/cm/cpumanager/state"
 	"k8s.io/kubernetes/pkg/kubelet/cm/cpumanager/topology"
 	"k8s.io/kubernetes/pkg/kubelet/cm/cpuset"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/status"
+	"path"
 )
 
 // ActivePodsFunc is a function that returns a list of pods to reconcile.
@@ -44,8 +45,8 @@ type runtimeService interface {
 
 type policyName string
 
-// cpuManagerStateFileName is the name file name where cpu manager stores it's state
-const cpuManagerStateFileName = "cpu_manager_state"
+// CPUManagerStateFileName is the name file name where cpu manager stores it's state
+const CPUManagerStateFileName = "cpu_manager_state"
 
 // Manager interface provides methods for Kubelet to manage pod cpus.
 type Manager interface {
@@ -97,7 +98,13 @@ type manager struct {
 var _ Manager = &manager{}
 
 // NewManager creates new cpu manager based on provided policy
-func NewManager(cpuPolicyName string, reconcilePeriod time.Duration, machineInfo *cadvisorapi.MachineInfo, nodeAllocatableReservation v1.ResourceList, stateFileDirectory string) (Manager, error) {
+func NewManager(
+	cpuPolicyName string,
+	reconcilePeriod time.Duration,
+	machineInfo *cadvisorapi.MachineInfo,
+	nodeAllocatableReservation v1.ResourceList,
+	stateFileDirecory string,
+) (Manager, error) {
 	var policy Policy
 
 	switch policyName(cpuPolicyName) {
@@ -110,19 +117,21 @@ func NewManager(cpuPolicyName string, reconcilePeriod time.Duration, machineInfo
 		if err != nil {
 			return nil, err
 		}
-		klog.Infof("[cpumanager] detected CPU topology: %v", topo)
+		glog.Infof("[cpumanager] detected CPU topology: %v", topo)
 		reservedCPUs, ok := nodeAllocatableReservation[v1.ResourceCPU]
 		if !ok {
-			// The static policy cannot initialize without this information.
-			return nil, fmt.Errorf("[cpumanager] unable to determine reserved CPU resources for static policy")
+			// The static policy cannot initialize without this information. Panic!
+			panic("[cpumanager] unable to determine reserved CPU resources for static policy")
 		}
 		if reservedCPUs.IsZero() {
+			// Panic!
+			//
 			// The static policy requires this to be nonzero. Zero CPU reservation
 			// would allow the shared pool to be completely exhausted. At that point
 			// either we would violate our guarantee of exclusivity or need to evict
 			// any pod that has at least one container that requires zero CPUs.
 			// See the comments in policy_static.go for more details.
-			return nil, fmt.Errorf("[cpumanager] the static policy requires systemreserved.cpu + kubereserved.cpu to be greater than zero")
+			panic("[cpumanager] the static policy requires systemreserved.cpu + kubereserved.cpu to be greater than zero")
 		}
 
 		// Take the ceiling of the reservation, since fractional CPUs cannot be
@@ -132,14 +141,13 @@ func NewManager(cpuPolicyName string, reconcilePeriod time.Duration, machineInfo
 		policy = NewStaticPolicy(topo, numReservedCPUs)
 
 	default:
-		klog.Errorf("[cpumanager] Unknown policy \"%s\", falling back to default policy \"%s\"", cpuPolicyName, PolicyNone)
+		glog.Errorf("[cpumanager] Unknown policy \"%s\", falling back to default policy \"%s\"", cpuPolicyName, PolicyNone)
 		policy = NewNonePolicy()
 	}
 
-	stateImpl, err := state.NewCheckpointState(stateFileDirectory, cpuManagerStateFileName, policy.Name())
-	if err != nil {
-		return nil, fmt.Errorf("could not initialize checkpoint manager: %v", err)
-	}
+	stateImpl := state.NewFileState(
+		path.Join(stateFileDirecory, CPUManagerStateFileName),
+		policy.Name())
 
 	manager := &manager{
 		policy:                     policy,
@@ -152,8 +160,8 @@ func NewManager(cpuPolicyName string, reconcilePeriod time.Duration, machineInfo
 }
 
 func (m *manager) Start(activePods ActivePodsFunc, podStatusProvider status.PodStatusProvider, containerRuntime runtimeService) {
-	klog.Infof("[cpumanager] starting with %s policy", m.policy.Name())
-	klog.Infof("[cpumanager] reconciling every %v", m.reconcilePeriod)
+	glog.Infof("[cpumanger] starting with %s policy", m.policy.Name())
+	glog.Infof("[cpumanger] reconciling every %v", m.reconcilePeriod)
 
 	m.activePods = activePods
 	m.podStatusProvider = podStatusProvider
@@ -170,7 +178,7 @@ func (m *manager) AddContainer(p *v1.Pod, c *v1.Container, containerID string) e
 	m.Lock()
 	err := m.policy.AddContainer(m.state, p, c, containerID)
 	if err != nil {
-		klog.Errorf("[cpumanager] AddContainer error: %v", err)
+		glog.Errorf("[cpumanager] AddContainer error: %v", err)
 		m.Unlock()
 		return err
 	}
@@ -180,17 +188,13 @@ func (m *manager) AddContainer(p *v1.Pod, c *v1.Container, containerID string) e
 	if !cpus.IsEmpty() {
 		err = m.updateContainerCPUSet(containerID, cpus)
 		if err != nil {
-			klog.Errorf("[cpumanager] AddContainer error: %v", err)
-			m.Lock()
-			err := m.policy.RemoveContainer(m.state, containerID)
-			if err != nil {
-				klog.Errorf("[cpumanager] AddContainer rollback state error: %v", err)
-			}
-			m.Unlock()
+			glog.Errorf("[cpumanager] AddContainer error: %v", err)
+			return err
 		}
-		return err
+	} else {
+		glog.V(5).Infof("[cpumanager] update container resources is skipped due to cpu set is empty")
 	}
-	klog.V(5).Infof("[cpumanager] update container resources is skipped due to cpu set is empty")
+
 	return nil
 }
 
@@ -200,7 +204,7 @@ func (m *manager) RemoveContainer(containerID string) error {
 
 	err := m.policy.RemoveContainer(m.state, containerID)
 	if err != nil {
-		klog.Errorf("[cpumanager] RemoveContainer error: %v", err)
+		glog.Errorf("[cpumanager] RemoveContainer error: %v", err)
 		return err
 	}
 	return nil
@@ -226,50 +230,30 @@ func (m *manager) reconcileState() (success []reconciledContainer, failure []rec
 		for _, container := range allContainers {
 			status, ok := m.podStatusProvider.GetPodStatus(pod.UID)
 			if !ok {
-				klog.Warningf("[cpumanager] reconcileState: skipping pod; status not found (pod: %s, container: %s)", pod.Name, container.Name)
+				glog.Warningf("[cpumanager] reconcileState: skipping pod; status not found (pod: %s, container: %s)", pod.Name, container.Name)
 				failure = append(failure, reconciledContainer{pod.Name, container.Name, ""})
 				break
 			}
 
 			containerID, err := findContainerIDByName(&status, container.Name)
 			if err != nil {
-				klog.Warningf("[cpumanager] reconcileState: skipping container; ID not found in status (pod: %s, container: %s, error: %v)", pod.Name, container.Name, err)
+				glog.Warningf("[cpumanager] reconcileState: skipping container; ID not found in status (pod: %s, container: %s, error: %v)", pod.Name, container.Name, err)
 				failure = append(failure, reconciledContainer{pod.Name, container.Name, ""})
 				continue
-			}
-
-			// Check whether container is present in state, there may be 3 reasons why it's not present:
-			// - policy does not want to track the container
-			// - kubelet has just been restarted - and there is no previous state file
-			// - container has been removed from state by RemoveContainer call (DeletionTimestamp is set)
-			if _, ok := m.state.GetCPUSet(containerID); !ok {
-				if status.Phase == v1.PodRunning && pod.DeletionTimestamp == nil {
-					klog.V(4).Infof("[cpumanager] reconcileState: container is not present in state - trying to add (pod: %s, container: %s, container id: %s)", pod.Name, container.Name, containerID)
-					err := m.AddContainer(pod, &container, containerID)
-					if err != nil {
-						klog.Errorf("[cpumanager] reconcileState: failed to add container (pod: %s, container: %s, container id: %s, error: %v)", pod.Name, container.Name, containerID, err)
-						failure = append(failure, reconciledContainer{pod.Name, container.Name, containerID})
-						continue
-					}
-				} else {
-					// if DeletionTimestamp is set, pod has already been removed from state
-					// skip the pod/container since it's not running and will be deleted soon
-					continue
-				}
 			}
 
 			cset := m.state.GetCPUSetOrDefault(containerID)
 			if cset.IsEmpty() {
 				// NOTE: This should not happen outside of tests.
-				klog.Infof("[cpumanager] reconcileState: skipping container; assigned cpuset is empty (pod: %s, container: %s)", pod.Name, container.Name)
+				glog.Infof("[cpumanager] reconcileState: skipping container; assigned cpuset is empty (pod: %s, container: %s)", pod.Name, container.Name)
 				failure = append(failure, reconciledContainer{pod.Name, container.Name, containerID})
 				continue
 			}
 
-			klog.V(4).Infof("[cpumanager] reconcileState: updating container (pod: %s, container: %s, container id: %s, cpuset: \"%v\")", pod.Name, container.Name, containerID, cset)
+			glog.V(4).Infof("[cpumanager] reconcileState: updating container (pod: %s, container: %s, container id: %s, cpuset: \"%v\")", pod.Name, container.Name, containerID, cset)
 			err = m.updateContainerCPUSet(containerID, cset)
 			if err != nil {
-				klog.Errorf("[cpumanager] reconcileState: failed to update container (pod: %s, container: %s, container id: %s, cpuset: \"%v\", error: %v)", pod.Name, container.Name, containerID, cset, err)
+				glog.Errorf("[cpumanager] reconcileState: failed to update container (pod: %s, container: %s, container id: %s, cpuset: \"%v\", error: %v)", pod.Name, container.Name, containerID, cset, err)
 				failure = append(failure, reconciledContainer{pod.Name, container.Name, containerID})
 				continue
 			}

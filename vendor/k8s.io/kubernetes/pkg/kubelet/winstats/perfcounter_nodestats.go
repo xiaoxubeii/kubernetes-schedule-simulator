@@ -23,32 +23,18 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
 	"unsafe"
 
+	"github.com/golang/glog"
 	cadvisorapi "github.com/google/cadvisor/info/v1"
-	"golang.org/x/sys/windows"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog"
 )
 
-// MemoryStatusEx is the same as Windows structure MEMORYSTATUSEX
-// https://msdn.microsoft.com/en-us/library/windows/desktop/aa366770(v=vs.85).aspx
-type MemoryStatusEx struct {
-	Length               uint32
-	MemoryLoad           uint32
-	TotalPhys            uint64
-	AvailPhys            uint64
-	TotalPageFile        uint64
-	AvailPageFile        uint64
-	TotalVirtual         uint64
-	AvailVirtual         uint64
-	AvailExtendedVirtual uint64
-}
-
 var (
-	modkernel32              = windows.NewLazySystemDLL("kernel32.dll")
-	procGlobalMemoryStatusEx = modkernel32.NewProc("GlobalMemoryStatusEx")
+	modkernel32                            = syscall.NewLazyDLL("kernel32.dll")
+	procGetPhysicallyInstalledSystemMemory = modkernel32.NewProc("GetPhysicallyInstalledSystemMemory")
 )
 
 // NewPerfCounterClient creates a client using perf counters
@@ -141,19 +127,19 @@ func (p *perfCounterNodeStatsClient) getNodeInfo() nodeInfo {
 func (p *perfCounterNodeStatsClient) collectMetricsData(cpuCounter, memWorkingSetCounter, memCommittedBytesCounter *perfCounter) {
 	cpuValue, err := cpuCounter.getData()
 	if err != nil {
-		klog.Errorf("Unable to get cpu perf counter data; err: %v", err)
+		glog.Errorf("Unable to get cpu perf counter data; err: %v", err)
 		return
 	}
 
 	memWorkingSetValue, err := memWorkingSetCounter.getData()
 	if err != nil {
-		klog.Errorf("Unable to get memWorkingSet perf counter data; err: %v", err)
+		glog.Errorf("Unable to get memWorkingSet perf counter data; err: %v", err)
 		return
 	}
 
 	memCommittedBytesValue, err := memCommittedBytesCounter.getData()
 	if err != nil {
-		klog.Errorf("Unable to get memCommittedBytes perf counter data; err: %v", err)
+		glog.Errorf("Unable to get memCommittedBytes perf counter data; err: %v", err)
 		return
 	}
 
@@ -177,24 +163,20 @@ func (p *perfCounterNodeStatsClient) convertCPUValue(cpuValue uint64) uint64 {
 }
 
 func getPhysicallyInstalledSystemMemoryBytes() (uint64, error) {
-	// We use GlobalMemoryStatusEx instead of GetPhysicallyInstalledSystemMemory
-	// on Windows node for the following reasons:
-	// 1. GetPhysicallyInstalledSystemMemory retrieves the amount of physically
-	// installed RAM from the computer's SMBIOS firmware tables.
-	// https://msdn.microsoft.com/en-us/library/windows/desktop/cc300158(v=vs.85).aspx
-	// On some VM, it is unable to read data from SMBIOS and fails with ERROR_INVALID_DATA.
-	// 2. On Linux node, total physical memory is read from MemTotal in /proc/meminfo.
-	// GlobalMemoryStatusEx returns the amount of physical memory that is available
-	// for the operating system to use. The amount returned by GlobalMemoryStatusEx
-	// is closer in parity with Linux
-	// https://www.kernel.org/doc/Documentation/filesystems/proc.txt
-	var statex MemoryStatusEx
-	statex.Length = uint32(unsafe.Sizeof(statex))
-	ret, _, _ := procGlobalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&statex)))
+	var physicalMemoryKiloBytes uint64
 
-	if ret == 0 {
+	if ok := getPhysicallyInstalledSystemMemory(&physicalMemoryKiloBytes); !ok {
 		return 0, errors.New("unable to read physical memory")
 	}
 
-	return statex.TotalPhys, nil
+	return physicalMemoryKiloBytes * 1024, nil // convert kilobytes to bytes
+}
+
+func getPhysicallyInstalledSystemMemory(totalMemoryInKilobytes *uint64) bool {
+	ret, _, _ := syscall.Syscall(procGetPhysicallyInstalledSystemMemory.Addr(), 1,
+		uintptr(unsafe.Pointer(totalMemoryInKilobytes)),
+		0,
+		0)
+
+	return ret != 0
 }

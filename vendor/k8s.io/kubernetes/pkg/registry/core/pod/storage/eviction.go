@@ -17,7 +17,6 @@ limitations under the License.
 package storage
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/client-go/util/retry"
@@ -78,7 +78,7 @@ func (r *EvictionREST) New() runtime.Object {
 }
 
 // Create attempts to create a new eviction.  That is, it tries to evict a pod.
-func (r *EvictionREST) Create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, options *metav1.CreateOptions) (runtime.Object, error) {
+func (r *EvictionREST) Create(ctx genericapirequest.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, includeUninitialized bool) (runtime.Object, error) {
 	eviction := obj.(*policy.Eviction)
 
 	obj, err := r.store.Get(ctx, eviction.Name, &metav1.GetOptions{})
@@ -86,16 +86,6 @@ func (r *EvictionREST) Create(ctx context.Context, obj runtime.Object, createVal
 		return nil, err
 	}
 	pod := obj.(*api.Pod)
-	// Evicting a terminal pod should result in direct deletion of pod as it already caused disruption by the time we are evicting.
-	// There is no need to check for pdb.
-	if pod.Status.Phase == api.PodSucceeded || pod.Status.Phase == api.PodFailed {
-		_, _, err = r.store.Delete(ctx, eviction.Name, eviction.DeleteOptions)
-		if err != nil {
-			return nil, err
-		}
-		return &metav1.Status{
-			Status: metav1.StatusSuccess}, nil
-	}
 	var rtStatus *metav1.Status
 	var pdbName string
 	err = retry.RetryOnConflict(EvictionsRetry, func() error {
@@ -135,7 +125,7 @@ func (r *EvictionREST) Create(ctx context.Context, obj runtime.Object, createVal
 		return rtStatus, nil
 	}
 
-	// At this point there was either no PDB or we succeeded in decrementing
+	// At this point there was either no PDB or we succeded in decrementing
 
 	// Try the delete
 	_, _, err = r.store.Delete(ctx, eviction.Name, eviction.DeleteOptions)
@@ -187,7 +177,7 @@ func (r *EvictionREST) checkAndDecrement(namespace string, podName string, pdb p
 }
 
 // getPodDisruptionBudgets returns any PDBs that match the pod or err if there's an error.
-func (r *EvictionREST) getPodDisruptionBudgets(ctx context.Context, pod *api.Pod) ([]policy.PodDisruptionBudget, error) {
+func (r *EvictionREST) getPodDisruptionBudgets(ctx genericapirequest.Context, pod *api.Pod) ([]policy.PodDisruptionBudget, error) {
 	if len(pod.Labels) == 0 {
 		return nil, nil
 	}

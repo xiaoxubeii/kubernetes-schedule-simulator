@@ -22,11 +22,11 @@ import (
 	"k8s.io/utils/exec"
 )
 
-func TestGetDNSSuffixSearchList(t *testing.T) {
+func TestGetDnsSuffixSearchList(t *testing.T) {
 	// Simple test
 	ipconfigInterface := New(exec.New())
 
-	_, err := ipconfigInterface.GetDNSSuffixSearchList()
+	_, err := ipconfigInterface.GetDnsSuffixSearchList()
 	if err != nil {
 		t.Errorf("expected success, got %v", err)
 	}

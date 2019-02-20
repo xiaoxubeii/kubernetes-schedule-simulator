@@ -19,7 +19,6 @@ package status
 import (
 	"fmt"
 	"math/rand"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,10 +48,6 @@ import (
 // Generate new instance of test pod with the same initial value.
 func getTestPod() *v1.Pod {
 	return &v1.Pod{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Pod",
-			APIVersion: "v1",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			UID:       "12345678",
 			Name:      "foo",
@@ -80,7 +75,7 @@ func (m *manager) testSyncBatch() {
 }
 
 func newTestManager(kubeClient clientset.Interface) *manager {
-	podManager := kubepod.NewBasicPodManager(podtest.NewFakeMirrorClient(), kubesecret.NewFakeManager(), kubeconfigmap.NewFakeManager(), podtest.NewMockCheckpointManager())
+	podManager := kubepod.NewBasicPodManager(podtest.NewFakeMirrorClient(), kubesecret.NewFakeManager(), kubeconfigmap.NewFakeManager())
 	podManager.AddPod(getTestPod())
 	return NewManager(kubeClient, podManager, &statustest.FakePodDeletionSafetyProvider{}).(*manager)
 }
@@ -308,7 +303,7 @@ func TestSyncPod(t *testing.T) {
 	testPod := getTestPod()
 	syncer.kubeClient = fake.NewSimpleClientset(testPod)
 	syncer.SetPodStatus(testPod, getRandomPodStatus())
-	verifyActions(t, syncer, []core.Action{getAction(), patchAction()})
+	verifyActions(t, syncer, []core.Action{getAction(), updateAction()})
 }
 
 func TestSyncPodChecksMismatchedUID(t *testing.T) {
@@ -362,18 +357,18 @@ func TestSyncPodNoDeadlock(t *testing.T) {
 	t.Logf("Pod not deleted (success case).")
 	ret = getTestPod()
 	m.SetPodStatus(pod, getRandomPodStatus())
-	verifyActions(t, m, []core.Action{getAction(), patchAction()})
+	verifyActions(t, m, []core.Action{getAction(), updateAction()})
 
 	t.Logf("Pod is terminated, but still running.")
-	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	pod.DeletionTimestamp = new(metav1.Time)
 	m.SetPodStatus(pod, getRandomPodStatus())
-	verifyActions(t, m, []core.Action{getAction(), patchAction()})
+	verifyActions(t, m, []core.Action{getAction(), updateAction()})
 
 	t.Logf("Pod is terminated successfully.")
 	pod.Status.ContainerStatuses[0].State.Running = nil
 	pod.Status.ContainerStatuses[0].State.Terminated = &v1.ContainerStateTerminated{}
 	m.SetPodStatus(pod, getRandomPodStatus())
-	verifyActions(t, m, []core.Action{getAction(), patchAction()})
+	verifyActions(t, m, []core.Action{getAction(), updateAction()})
 
 	t.Logf("Error case.")
 	ret = nil
@@ -397,7 +392,7 @@ func TestStaleUpdates(t *testing.T) {
 	t.Logf("sync batch before syncPods pushes latest status, so we should see three statuses in the channel, but only one update")
 	m.syncBatch()
 	verifyUpdates(t, m, 3)
-	verifyActions(t, m, []core.Action{getAction(), patchAction()})
+	verifyActions(t, m, []core.Action{getAction(), updateAction()})
 	t.Logf("Nothing left in the channel to sync")
 	verifyActions(t, m, []core.Action{})
 
@@ -411,7 +406,7 @@ func TestStaleUpdates(t *testing.T) {
 
 	m.SetPodStatus(pod, status)
 	m.syncBatch()
-	verifyActions(t, m, []core.Action{getAction(), patchAction()})
+	verifyActions(t, m, []core.Action{getAction(), updateAction()})
 
 	t.Logf("Nothing stuck in the pipe.")
 	verifyUpdates(t, m, 0)
@@ -448,26 +443,9 @@ func TestStatusEquality(t *testing.T) {
 		}
 		normalizeStatus(&pod, &oldPodStatus)
 		normalizeStatus(&pod, &podStatus)
-		if !isPodStatusByKubeletEqual(&oldPodStatus, &podStatus) {
+		if !isStatusEqual(&oldPodStatus, &podStatus) {
 			t.Fatalf("Order of container statuses should not affect normalized equality.")
 		}
-	}
-
-	oldPodStatus := podStatus
-	podStatus.Conditions = append(podStatus.Conditions, v1.PodCondition{
-		Type:   v1.PodConditionType("www.example.com/feature"),
-		Status: v1.ConditionTrue,
-	})
-
-	oldPodStatus.Conditions = append(podStatus.Conditions, v1.PodCondition{
-		Type:   v1.PodConditionType("www.example.com/feature"),
-		Status: v1.ConditionFalse,
-	})
-
-	normalizeStatus(&pod, &oldPodStatus)
-	normalizeStatus(&pod, &podStatus)
-	if !isPodStatusByKubeletEqual(&oldPodStatus, &podStatus) {
-		t.Fatalf("Differences in pod condition not owned by kubelet should not affect normalized equality.")
 	}
 }
 
@@ -529,7 +507,7 @@ func TestStaticPod(t *testing.T) {
 	t.Logf("Should be able to get the static pod status from status manager")
 	retrievedStatus := expectPodStatus(t, m, staticPod)
 	normalizeStatus(staticPod, &status)
-	assert.True(t, isPodStatusByKubeletEqual(&status, &retrievedStatus), "Expected: %+v, Got: %+v", status, retrievedStatus)
+	assert.True(t, isStatusEqual(&status, &retrievedStatus), "Expected: %+v, Got: %+v", status, retrievedStatus)
 
 	t.Logf("Should not sync pod in syncBatch because there is no corresponding mirror pod for the static pod.")
 	m.syncBatch()
@@ -542,10 +520,10 @@ func TestStaticPod(t *testing.T) {
 
 	t.Logf("Should be able to get the mirror pod status from status manager")
 	retrievedStatus, _ = m.GetPodStatus(mirrorPod.UID)
-	assert.True(t, isPodStatusByKubeletEqual(&status, &retrievedStatus), "Expected: %+v, Got: %+v", status, retrievedStatus)
+	assert.True(t, isStatusEqual(&status, &retrievedStatus), "Expected: %+v, Got: %+v", status, retrievedStatus)
 
 	t.Logf("Should sync pod because the corresponding mirror pod is created")
-	verifyActions(t, m, []core.Action{getAction(), patchAction()})
+	verifyActions(t, m, []core.Action{getAction(), updateAction()})
 
 	t.Logf("syncBatch should not sync any pods because nothing is changed.")
 	m.testSyncBatch()
@@ -763,7 +741,7 @@ func TestReconcilePodStatus(t *testing.T) {
 		t.Errorf("Pod status is different, a reconciliation is needed")
 	}
 	syncer.syncBatch()
-	verifyActions(t, syncer, []core.Action{getAction(), patchAction()})
+	verifyActions(t, syncer, []core.Action{getAction(), updateAction()})
 }
 
 func expectPodStatus(t *testing.T, m *manager, pod *v1.Pod) v1.PodStatus {
@@ -777,16 +755,18 @@ func expectPodStatus(t *testing.T, m *manager, pod *v1.Pod) v1.PodStatus {
 func TestDeletePods(t *testing.T) {
 	pod := getTestPod()
 	t.Logf("Set the deletion timestamp.")
-	pod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	pod.DeletionTimestamp = new(metav1.Time)
 	client := fake.NewSimpleClientset(pod)
 	m := newTestManager(client)
 	m.podManager.AddPod(pod)
+
 	status := getRandomPodStatus()
 	now := metav1.Now()
 	status.StartTime = &now
 	m.SetPodStatus(pod, status)
+
 	t.Logf("Expect to see a delete action.")
-	verifyActions(t, m, []core.Action{getAction(), patchAction(), deleteAction()})
+	verifyActions(t, m, []core.Action{getAction(), updateAction(), deleteAction()})
 }
 
 func TestDoNotDeleteMirrorPods(t *testing.T) {
@@ -799,7 +779,7 @@ func TestDoNotDeleteMirrorPods(t *testing.T) {
 		kubetypes.ConfigMirrorAnnotationKey: "mirror",
 	}
 	t.Logf("Set the deletion timestamp.")
-	mirrorPod.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	mirrorPod.DeletionTimestamp = new(metav1.Time)
 	client := fake.NewSimpleClientset(mirrorPod)
 	m := newTestManager(client)
 	m.podManager.AddPod(staticPod)
@@ -815,68 +795,7 @@ func TestDoNotDeleteMirrorPods(t *testing.T) {
 	m.SetPodStatus(staticPod, status)
 
 	t.Logf("Expect not to see a delete action.")
-	verifyActions(t, m, []core.Action{getAction(), patchAction()})
-}
-
-func TestUpdateLastTransitionTime(t *testing.T) {
-	old := metav1.Now()
-	for desc, test := range map[string]struct {
-		condition    *v1.PodCondition
-		oldCondition *v1.PodCondition
-		expectUpdate bool
-	}{
-		"should do nothing if no corresponding condition": {
-			expectUpdate: false,
-		},
-		"should update last transition time if no old condition": {
-			condition: &v1.PodCondition{
-				Type:   "test-type",
-				Status: v1.ConditionTrue,
-			},
-			oldCondition: nil,
-			expectUpdate: true,
-		},
-		"should update last transition time if condition is changed": {
-			condition: &v1.PodCondition{
-				Type:   "test-type",
-				Status: v1.ConditionTrue,
-			},
-			oldCondition: &v1.PodCondition{
-				Type:               "test-type",
-				Status:             v1.ConditionFalse,
-				LastTransitionTime: old,
-			},
-			expectUpdate: true,
-		},
-		"should keep last transition time if condition is not changed": {
-			condition: &v1.PodCondition{
-				Type:   "test-type",
-				Status: v1.ConditionFalse,
-			},
-			oldCondition: &v1.PodCondition{
-				Type:               "test-type",
-				Status:             v1.ConditionFalse,
-				LastTransitionTime: old,
-			},
-			expectUpdate: false,
-		},
-	} {
-		t.Logf("TestCase %q", desc)
-		status := &v1.PodStatus{}
-		oldStatus := &v1.PodStatus{}
-		if test.condition != nil {
-			status.Conditions = []v1.PodCondition{*test.condition}
-		}
-		if test.oldCondition != nil {
-			oldStatus.Conditions = []v1.PodCondition{*test.oldCondition}
-		}
-		updateLastTransitionTime(status, oldStatus, "test-type")
-		if test.expectUpdate {
-			assert.True(t, status.Conditions[0].LastTransitionTime.After(old.Time))
-		} else if test.condition != nil {
-			assert.Equal(t, old, status.Conditions[0].LastTransitionTime)
-		}
-	}
+	verifyActions(t, m, []core.Action{getAction(), updateAction()})
 }
 
 func getAction() core.GetAction {
@@ -887,197 +806,6 @@ func updateAction() core.UpdateAction {
 	return core.UpdateActionImpl{ActionImpl: core.ActionImpl{Verb: "update", Resource: schema.GroupVersionResource{Resource: "pods"}, Subresource: "status"}}
 }
 
-func patchAction() core.PatchAction {
-	return core.PatchActionImpl{ActionImpl: core.ActionImpl{Verb: "patch", Resource: schema.GroupVersionResource{Resource: "pods"}, Subresource: "status"}}
-}
-
 func deleteAction() core.DeleteAction {
 	return core.DeleteActionImpl{ActionImpl: core.ActionImpl{Verb: "delete", Resource: schema.GroupVersionResource{Resource: "pods"}}}
-}
-
-func TestMergePodStatus(t *testing.T) {
-	useCases := []struct {
-		desc            string
-		oldPodStatus    func(input v1.PodStatus) v1.PodStatus
-		newPodStatus    func(input v1.PodStatus) v1.PodStatus
-		expectPodStatus v1.PodStatus
-	}{
-		{
-			"no change",
-			func(input v1.PodStatus) v1.PodStatus { return input },
-			func(input v1.PodStatus) v1.PodStatus { return input },
-			getPodStatus(),
-		},
-		{
-			"readiness changes",
-			func(input v1.PodStatus) v1.PodStatus { return input },
-			func(input v1.PodStatus) v1.PodStatus {
-				input.Conditions[0].Status = v1.ConditionFalse
-				return input
-			},
-			v1.PodStatus{
-				Phase: v1.PodRunning,
-				Conditions: []v1.PodCondition{
-					{
-						Type:   v1.PodReady,
-						Status: v1.ConditionFalse,
-					},
-					{
-						Type:   v1.PodScheduled,
-						Status: v1.ConditionTrue,
-					},
-				},
-				Message: "Message",
-			},
-		},
-		{
-			"additional pod condition",
-			func(input v1.PodStatus) v1.PodStatus {
-				input.Conditions = append(input.Conditions, v1.PodCondition{
-					Type:   v1.PodConditionType("example.com/feature"),
-					Status: v1.ConditionTrue,
-				})
-				return input
-			},
-			func(input v1.PodStatus) v1.PodStatus { return input },
-			v1.PodStatus{
-				Phase: v1.PodRunning,
-				Conditions: []v1.PodCondition{
-					{
-						Type:   v1.PodReady,
-						Status: v1.ConditionTrue,
-					},
-					{
-						Type:   v1.PodScheduled,
-						Status: v1.ConditionTrue,
-					},
-					{
-						Type:   v1.PodConditionType("example.com/feature"),
-						Status: v1.ConditionTrue,
-					},
-				},
-				Message: "Message",
-			},
-		},
-		{
-			"additional pod condition and readiness changes",
-			func(input v1.PodStatus) v1.PodStatus {
-				input.Conditions = append(input.Conditions, v1.PodCondition{
-					Type:   v1.PodConditionType("example.com/feature"),
-					Status: v1.ConditionTrue,
-				})
-				return input
-			},
-			func(input v1.PodStatus) v1.PodStatus {
-				input.Conditions[0].Status = v1.ConditionFalse
-				return input
-			},
-			v1.PodStatus{
-				Phase: v1.PodRunning,
-				Conditions: []v1.PodCondition{
-					{
-						Type:   v1.PodReady,
-						Status: v1.ConditionFalse,
-					},
-					{
-						Type:   v1.PodScheduled,
-						Status: v1.ConditionTrue,
-					},
-					{
-						Type:   v1.PodConditionType("example.com/feature"),
-						Status: v1.ConditionTrue,
-					},
-				},
-				Message: "Message",
-			},
-		},
-		{
-			"additional pod condition changes",
-			func(input v1.PodStatus) v1.PodStatus {
-				input.Conditions = append(input.Conditions, v1.PodCondition{
-					Type:   v1.PodConditionType("example.com/feature"),
-					Status: v1.ConditionTrue,
-				})
-				return input
-			},
-			func(input v1.PodStatus) v1.PodStatus {
-				input.Conditions = append(input.Conditions, v1.PodCondition{
-					Type:   v1.PodConditionType("example.com/feature"),
-					Status: v1.ConditionFalse,
-				})
-				return input
-			},
-			v1.PodStatus{
-				Phase: v1.PodRunning,
-				Conditions: []v1.PodCondition{
-					{
-						Type:   v1.PodReady,
-						Status: v1.ConditionTrue,
-					},
-					{
-						Type:   v1.PodScheduled,
-						Status: v1.ConditionTrue,
-					},
-					{
-						Type:   v1.PodConditionType("example.com/feature"),
-						Status: v1.ConditionTrue,
-					},
-				},
-				Message: "Message",
-			},
-		},
-	}
-
-	for _, tc := range useCases {
-		output := mergePodStatus(tc.oldPodStatus(getPodStatus()), tc.newPodStatus(getPodStatus()))
-		if !conditionsEqual(output.Conditions, tc.expectPodStatus.Conditions) || !statusEqual(output, tc.expectPodStatus) {
-			t.Errorf("test case %q failed, expect: %+v, got %+v", tc.desc, tc.expectPodStatus, output)
-		}
-	}
-
-}
-
-func statusEqual(left, right v1.PodStatus) bool {
-	left.Conditions = nil
-	right.Conditions = nil
-	return reflect.DeepEqual(left, right)
-}
-
-func conditionsEqual(left, right []v1.PodCondition) bool {
-	if len(left) != len(right) {
-		return false
-	}
-
-	for _, l := range left {
-		found := false
-		for _, r := range right {
-			if l.Type == r.Type {
-				found = true
-				if l.Status != r.Status {
-					return false
-				}
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
-func getPodStatus() v1.PodStatus {
-	return v1.PodStatus{
-		Phase: v1.PodRunning,
-		Conditions: []v1.PodCondition{
-			{
-				Type:   v1.PodReady,
-				Status: v1.ConditionTrue,
-			},
-			{
-				Type:   v1.PodScheduled,
-				Status: v1.ConditionTrue,
-			},
-		},
-		Message: "Message",
-	}
 }

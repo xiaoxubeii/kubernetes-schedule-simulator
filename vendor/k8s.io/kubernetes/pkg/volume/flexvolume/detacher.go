@@ -19,9 +19,10 @@ package flexvolume
 import (
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
 )
@@ -31,8 +32,6 @@ type flexVolumeDetacher struct {
 }
 
 var _ volume.Detacher = &flexVolumeDetacher{}
-
-var _ volume.DeviceUnmounter = &flexVolumeDetacher{}
 
 // Detach is part of the volume.Detacher interface.
 func (d *flexVolumeDetacher) Detach(volumeName string, hostName types.NodeName) error {
@@ -48,29 +47,34 @@ func (d *flexVolumeDetacher) Detach(volumeName string, hostName types.NodeName) 
 	return err
 }
 
+// WaitForDetach is part of the volume.Detacher interface.
+func (d *flexVolumeDetacher) WaitForDetach(devicePath string, timeout time.Duration) error {
+	call := d.plugin.NewDriverCallWithTimeout(waitForDetachCmd, timeout)
+	call.Append(devicePath)
+
+	_, err := call.Run()
+	if isCmdNotSupportedErr(err) {
+		return (*detacherDefaults)(d).WaitForDetach(devicePath, timeout)
+	}
+	return err
+}
+
 // UnmountDevice is part of the volume.Detacher interface.
 func (d *flexVolumeDetacher) UnmountDevice(deviceMountPath string) error {
 
-	pathExists, pathErr := util.PathExists(deviceMountPath)
-	if !pathExists {
-		klog.Warningf("Warning: Unmount skipped because path does not exist: %v", deviceMountPath)
+	if pathExists, pathErr := util.PathExists(deviceMountPath); pathErr != nil {
+		return fmt.Errorf("Error checking if path exists: %v", pathErr)
+	} else if !pathExists {
+		glog.Warningf("Warning: Unmount skipped because path does not exist: %v", deviceMountPath)
 		return nil
-	}
-	if pathErr != nil && !util.IsCorruptedMnt(pathErr) {
-		return fmt.Errorf("Error checking path: %v", pathErr)
 	}
 
 	notmnt, err := isNotMounted(d.plugin.host.GetMounter(d.plugin.GetPluginName()), deviceMountPath)
 	if err != nil {
-		if util.IsCorruptedMnt(err) {
-			notmnt = false // Corrupted error is assumed to be mounted.
-		} else {
-			return err
-		}
+		return err
 	}
-
 	if notmnt {
-		klog.Warningf("Warning: Path: %v already unmounted", deviceMountPath)
+		glog.Warningf("Warning: Path: %v already unmounted", deviceMountPath)
 	} else {
 		call := d.plugin.NewDriverCall(unmountDeviceCmd)
 		call.Append(deviceMountPath)

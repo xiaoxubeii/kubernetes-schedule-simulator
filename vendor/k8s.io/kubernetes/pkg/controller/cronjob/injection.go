@@ -118,8 +118,7 @@ func (r realJobControl) CreateJob(namespace string, job *batchv1.Job) (*batchv1.
 }
 
 func (r realJobControl) DeleteJob(namespace string, name string) error {
-	background := metav1.DeletePropagationBackground
-	return r.KubeClient.BatchV1().Jobs(namespace).Delete(name, &metav1.DeleteOptions{PropagationPolicy: &background})
+	return r.KubeClient.BatchV1().Jobs(namespace).Delete(name, nil)
 }
 
 type fakeJobControl struct {

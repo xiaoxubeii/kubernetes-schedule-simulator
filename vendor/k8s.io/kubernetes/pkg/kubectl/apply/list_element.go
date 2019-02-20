@@ -65,17 +65,3 @@ func sliceCast(i interface{}) []interface{} {
 	}
 	return i.([]interface{})
 }
-
-// HasConflict returns ConflictError if fields in recorded and remote of ListElement conflict
-func (e ListElement) HasConflict() error {
-	for _, item := range e.Values {
-		if item, ok := item.(ConflictDetector); ok {
-			if err := item.HasConflict(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-var _ ConflictDetector = &ListElement{}

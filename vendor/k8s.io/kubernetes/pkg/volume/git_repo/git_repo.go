@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"k8s.io/api/core/v1"
@@ -91,10 +90,6 @@ func (plugin *gitRepoPlugin) SupportsBulkVolumeVerification() bool {
 }
 
 func (plugin *gitRepoPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod, opts volume.VolumeOptions) (volume.Mounter, error) {
-	if err := validateVolume(spec.Volume.GitRepo); err != nil {
-		return nil, err
-	}
-
 	return &gitRepoVolumeMounter{
 		gitRepoVolume: &gitRepoVolume{
 			volName: spec.Name(),
@@ -195,7 +190,7 @@ func (b *gitRepoVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 		return err
 	}
 
-	args := []string{"clone", "--", b.source}
+	args := []string{"clone", b.source}
 
 	if len(b.target) != 0 {
 		args = append(args, b.target)
@@ -219,7 +214,7 @@ func (b *gitRepoVolumeMounter) SetUpAt(dir string, fsGroup *int64) error {
 	var subdir string
 
 	switch {
-	case len(b.target) != 0 && filepath.Clean(b.target) == ".":
+	case b.target == ".":
 		// if target dir is '.', use the current dir
 		subdir = path.Join(dir)
 	case len(files) == 1:
@@ -253,19 +248,6 @@ func (b *gitRepoVolumeMounter) execCommand(command string, args []string, dir st
 	return cmd.CombinedOutput()
 }
 
-func validateVolume(src *v1.GitRepoVolumeSource) error {
-	if err := validateNonFlagArgument(src.Repository, "repository"); err != nil {
-		return err
-	}
-	if err := validateNonFlagArgument(src.Revision, "revision"); err != nil {
-		return err
-	}
-	if err := validateNonFlagArgument(src.Directory, "directory"); err != nil {
-		return err
-	}
-	return nil
-}
-
 // gitRepoVolumeUnmounter cleans git repo volumes.
 type gitRepoVolumeUnmounter struct {
 	*gitRepoVolume
@@ -280,7 +262,7 @@ func (c *gitRepoVolumeUnmounter) TearDown() error {
 
 // TearDownAt simply deletes everything in the directory.
 func (c *gitRepoVolumeUnmounter) TearDownAt(dir string) error {
-	return volumeutil.UnmountViaEmptyDir(dir, c.plugin.host, c.volName, wrappedVolumeSpec(), c.podUID)
+	return volume.UnmountViaEmptyDir(dir, c.plugin.host, c.volName, wrappedVolumeSpec(), c.podUID)
 }
 
 func getVolumeSource(spec *volume.Spec) (*v1.GitRepoVolumeSource, bool) {
@@ -293,11 +275,4 @@ func getVolumeSource(spec *volume.Spec) (*v1.GitRepoVolumeSource, bool) {
 	}
 
 	return volumeSource, readOnly
-}
-
-func validateNonFlagArgument(arg, argName string) error {
-	if len(arg) > 0 && arg[0] == '-' {
-		return fmt.Errorf("%q is an invalid value for %s", arg, argName)
-	}
-	return nil
 }

@@ -17,11 +17,9 @@ limitations under the License.
 package credentialprovider
 
 import (
-	"reflect"
-	"sort"
 	"sync"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
 // All registered credential providers.
@@ -38,9 +36,9 @@ func RegisterCredentialProvider(name string, provider DockerConfigProvider) {
 	defer providersMutex.Unlock()
 	_, found := providers[name]
 	if found {
-		klog.Fatalf("Credential provider %q was registered twice", name)
+		glog.Fatalf("Credential provider %q was registered twice", name)
 	}
-	klog.V(4).Infof("Registered credential provider %q", name)
+	glog.V(4).Infof("Registered credential provider %q", name)
 	providers[name] = provider
 }
 
@@ -51,17 +49,11 @@ func NewDockerKeyring() DockerKeyring {
 		Providers: make([]DockerConfigProvider, 0),
 	}
 
-	keys := reflect.ValueOf(providers).MapKeys()
-	stringKeys := make([]string, len(keys))
-	for ix := range keys {
-		stringKeys[ix] = keys[ix].String()
-	}
-	sort.Strings(stringKeys)
-
-	for _, key := range stringKeys {
-		provider := providers[key]
+	// TODO(mattmoor): iterating over the map is non-deterministic.  We should
+	// introduce the notion of priorities for conflict resolution.
+	for name, provider := range providers {
 		if provider.Enabled() {
-			klog.V(4).Infof("Registering credential provider: %v", key)
+			glog.V(4).Infof("Registering credential provider: %v", name)
 			keyring.Providers = append(keyring.Providers, provider)
 		}
 	}

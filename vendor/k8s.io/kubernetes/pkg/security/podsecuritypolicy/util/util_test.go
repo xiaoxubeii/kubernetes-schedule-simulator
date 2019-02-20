@@ -17,11 +17,10 @@ limitations under the License.
 package util
 
 import (
+	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/extensions"
 	"reflect"
 	"testing"
-
-	policy "k8s.io/api/policy/v1beta1"
-	api "k8s.io/kubernetes/pkg/apis/core"
 )
 
 // TestVolumeSourceFSTypeDrift ensures that for every known type of volume source (by the fields on
@@ -42,7 +41,7 @@ func TestVolumeSourceFSTypeDrift(t *testing.T) {
 
 		fsType, err := GetVolumeFSType(api.Volume{VolumeSource: volumeSource})
 		if err != nil {
-			t.Errorf("error getting fstype for field %s.  This likely means that drift has occurred between FSType and VolumeSource.  Please update the api and getVolumeFSType", fieldVal.Name)
+			t.Errorf("error getting fstype for field %s.  This likely means that drift has occured between FSType and VolumeSource.  Please update the api and getVolumeFSType", fieldVal.Name)
 		}
 
 		if !allFSTypes.Has(string(fsType)) {
@@ -53,45 +52,45 @@ func TestVolumeSourceFSTypeDrift(t *testing.T) {
 
 func TestPSPAllowsFSType(t *testing.T) {
 	tests := map[string]struct {
-		psp    *policy.PodSecurityPolicy
-		fsType policy.FSType
+		psp    *extensions.PodSecurityPolicy
+		fsType extensions.FSType
 		allows bool
 	}{
 		"nil psp": {
 			psp:    nil,
-			fsType: policy.HostPath,
+			fsType: extensions.HostPath,
 			allows: false,
 		},
 		"empty volumes": {
-			psp:    &policy.PodSecurityPolicy{},
-			fsType: policy.HostPath,
+			psp:    &extensions.PodSecurityPolicy{},
+			fsType: extensions.HostPath,
 			allows: false,
 		},
 		"non-matching": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					Volumes: []policy.FSType{policy.AWSElasticBlockStore},
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					Volumes: []extensions.FSType{extensions.AWSElasticBlockStore},
 				},
 			},
-			fsType: policy.HostPath,
+			fsType: extensions.HostPath,
 			allows: false,
 		},
 		"match on FSTypeAll": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					Volumes: []policy.FSType{policy.All},
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					Volumes: []extensions.FSType{extensions.All},
 				},
 			},
-			fsType: policy.HostPath,
+			fsType: extensions.HostPath,
 			allows: true,
 		},
 		"match on direct match": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					Volumes: []policy.FSType{policy.HostPath},
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					Volumes: []extensions.FSType{extensions.HostPath},
 				},
 			},
-			fsType: policy.HostPath,
+			fsType: extensions.HostPath,
 			allows: true,
 		},
 	}
@@ -106,148 +105,92 @@ func TestPSPAllowsFSType(t *testing.T) {
 
 func TestAllowsHostVolumePath(t *testing.T) {
 	tests := map[string]struct {
-		psp            *policy.PodSecurityPolicy
-		path           string
-		allows         bool
-		mustBeReadOnly bool
+		psp    *extensions.PodSecurityPolicy
+		path   string
+		allows bool
 	}{
 		"nil psp": {
-			psp:            nil,
-			path:           "/test",
-			allows:         false,
-			mustBeReadOnly: false,
+			psp:    nil,
+			path:   "/test",
+			allows: false,
 		},
 		"empty allowed paths": {
-			psp:            &policy.PodSecurityPolicy{},
-			path:           "/test",
-			allows:         true,
-			mustBeReadOnly: false,
+			psp:    &extensions.PodSecurityPolicy{},
+			path:   "/test",
+			allows: true,
 		},
 		"non-matching": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					AllowedHostPaths: []policy.AllowedHostPath{
-						{
-							PathPrefix: "/foo",
-							ReadOnly:   true,
-						},
-					},
-				},
-			},
-			path:           "/foobar",
-			allows:         false,
-			mustBeReadOnly: false,
-		},
-		"match on direct match": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					AllowedHostPaths: []policy.AllowedHostPath{
-						{
-							PathPrefix: "/foo",
-							ReadOnly:   true,
-						},
-					},
-				},
-			},
-			path:           "/foo",
-			allows:         true,
-			mustBeReadOnly: true,
-		},
-		"match with trailing slash on host path": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					AllowedHostPaths: []policy.AllowedHostPath{
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					AllowedHostPaths: []extensions.AllowedHostPath{
 						{PathPrefix: "/foo"},
 					},
 				},
 			},
-			path:           "/foo/",
-			allows:         true,
-			mustBeReadOnly: false,
+			path:   "/foobar",
+			allows: false,
+		},
+		"match on direct match": {
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					AllowedHostPaths: []extensions.AllowedHostPath{
+						{PathPrefix: "/foo"},
+					},
+				},
+			},
+			path:   "/foo",
+			allows: true,
+		},
+		"match with trailing slash on host path": {
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					AllowedHostPaths: []extensions.AllowedHostPath{
+						{PathPrefix: "/foo"},
+					},
+				},
+			},
+			path:   "/foo/",
+			allows: true,
 		},
 		"match with trailing slash on allowed path": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					AllowedHostPaths: []policy.AllowedHostPath{
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					AllowedHostPaths: []extensions.AllowedHostPath{
 						{PathPrefix: "/foo/"},
 					},
 				},
 			},
-			path:           "/foo",
-			allows:         true,
-			mustBeReadOnly: false,
+			path:   "/foo",
+			allows: true,
 		},
 		"match child directory": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					AllowedHostPaths: []policy.AllowedHostPath{
-						{
-							PathPrefix: "/foo/",
-							ReadOnly:   true,
-						},
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					AllowedHostPaths: []extensions.AllowedHostPath{
+						{PathPrefix: "/foo/"},
 					},
 				},
 			},
-			path:           "/foo/bar",
-			allows:         true,
-			mustBeReadOnly: true,
+			path:   "/foo/bar",
+			allows: true,
 		},
 		"non-matching parent directory": {
-			psp: &policy.PodSecurityPolicy{
-				Spec: policy.PodSecurityPolicySpec{
-					AllowedHostPaths: []policy.AllowedHostPath{
+			psp: &extensions.PodSecurityPolicy{
+				Spec: extensions.PodSecurityPolicySpec{
+					AllowedHostPaths: []extensions.AllowedHostPath{
 						{PathPrefix: "/foo/bar"},
 					},
 				},
 			},
-			path:           "/foo",
-			allows:         false,
-			mustBeReadOnly: false,
+			path:   "/foo",
+			allows: false,
 		},
 	}
 
 	for k, v := range tests {
-		allows, mustBeReadOnly := AllowsHostVolumePath(v.psp, v.path)
+		allows := AllowsHostVolumePath(v.psp, v.path)
 		if v.allows != allows {
-			t.Errorf("allows: %s expected %t but got %t", k, v.allows, allows)
-		}
-		if v.mustBeReadOnly != mustBeReadOnly {
-			t.Errorf("mustBeReadOnly: %s expected %t but got %t", k, v.mustBeReadOnly, mustBeReadOnly)
-		}
-	}
-}
-
-func TestEqualStringSlices(t *testing.T) {
-	tests := map[string]struct {
-		arg1           []string
-		arg2           []string
-		expectedResult bool
-	}{
-		"nil equals to nil": {
-			arg1:           nil,
-			arg2:           nil,
-			expectedResult: true,
-		},
-		"equal by size": {
-			arg1:           []string{"1", "1"},
-			arg2:           []string{"1", "1"},
-			expectedResult: true,
-		},
-		"not equal by size": {
-			arg1:           []string{"1"},
-			arg2:           []string{"1", "1"},
-			expectedResult: false,
-		},
-		"not equal by elements": {
-			arg1:           []string{"1", "1"},
-			arg2:           []string{"1", "2"},
-			expectedResult: false,
-		},
-	}
-
-	for k, v := range tests {
-		if result := EqualStringSlices(v.arg1, v.arg2); result != v.expectedResult {
-			t.Errorf("%s expected to return %t but got %t", k, v.expectedResult, result)
+			t.Errorf("%s expected %t but got %t", k, v.allows, allows)
 		}
 	}
 }

@@ -8,12 +8,16 @@ load(
 go_library(
     name = "go_default_library",
     srcs = [
-        "cgroups_linux.go",
         "cgroups_unsupported.go",
-    ],
+    ] + select({
+        "@io_bazel_rules_go//go/platform:linux_amd64": [
+            "cgroups_linux.go",
+        ],
+        "//conditions:default": [],
+    }),
     importpath = "k8s.io/kubernetes/pkg/kubelet/cm/util",
     deps = select({
-        "@io_bazel_rules_go//go/platform:linux": [
+        "@io_bazel_rules_go//go/platform:linux_amd64": [
             "//vendor/github.com/opencontainers/runc/libcontainer/cgroups:go_default_library",
             "//vendor/github.com/opencontainers/runc/libcontainer/utils:go_default_library",
         ],

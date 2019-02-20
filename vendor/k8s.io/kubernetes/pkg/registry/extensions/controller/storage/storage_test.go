@@ -74,6 +74,17 @@ var validController = api.ReplicationController{
 	Spec:       validControllerSpec,
 }
 
+var validScale = autoscaling.Scale{
+	ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "test"},
+	Spec: autoscaling.ScaleSpec{
+		Replicas: validReplicas,
+	},
+	Status: autoscaling.ScaleStatus{
+		Replicas: 0,
+		Selector: "a=b",
+	},
+}
+
 func TestGet(t *testing.T) {
 	storage, _, si, destroyFunc := newStorage(t)
 	defer destroyFunc()
@@ -110,7 +121,7 @@ func TestUpdate(t *testing.T) {
 		},
 	}
 
-	if _, _, err := storage.Update(ctx, update.Name, rest.DefaultUpdatedObjectInfo(&update), rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{}); err != nil {
+	if _, _, err := storage.Update(ctx, update.Name, rest.DefaultUpdatedObjectInfo(&update), rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	obj, err := storage.Get(ctx, "foo", &metav1.GetOptions{})

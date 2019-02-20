@@ -28,29 +28,21 @@ import (
 	"k8s.io/kubernetes/pkg/probe"
 	"k8s.io/kubernetes/pkg/version"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 )
 
-// New creates Prober that will skip TLS verification while probing.
-func New() Prober {
+func New() HTTPProber {
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
 	return NewWithTLSConfig(tlsConfig)
 }
 
 // NewWithTLSConfig takes tls config as parameter.
-func NewWithTLSConfig(config *tls.Config) Prober {
-	// We do not want the probe use node's local proxy set.
-	transport := utilnet.SetTransportDefaults(
-		&http.Transport{
-			TLSClientConfig:   config,
-			DisableKeepAlives: true,
-			Proxy:             http.ProxyURL(nil),
-		})
+func NewWithTLSConfig(config *tls.Config) HTTPProber {
+	transport := utilnet.SetTransportDefaults(&http.Transport{TLSClientConfig: config, DisableKeepAlives: true})
 	return httpProber{transport}
 }
 
-// Prober is an interface that defines the Probe function for doing HTTP readiness/liveness checks.
-type Prober interface {
+type HTTPProber interface {
 	Probe(url *url.URL, headers http.Header, timeout time.Duration) (probe.Result, string, error)
 }
 
@@ -58,13 +50,12 @@ type httpProber struct {
 	transport *http.Transport
 }
 
-// Probe returns a ProbeRunner capable of running an HTTP check.
+// Probe returns a ProbeRunner capable of running an http check.
 func (pr httpProber) Probe(url *url.URL, headers http.Header, timeout time.Duration) (probe.Result, string, error) {
 	return DoHTTPProbe(url, headers, &http.Client{Timeout: timeout, Transport: pr.transport})
 }
 
-// GetHTTPInterface is an interface for making HTTP requests, that returns a response and error.
-type GetHTTPInterface interface {
+type HTTPGetInterface interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
@@ -72,7 +63,7 @@ type GetHTTPInterface interface {
 // If the HTTP response code is successful (i.e. 400 > code >= 200), it returns Success.
 // If the HTTP response code is unsuccessful or HTTP communication fails, it returns Failure.
 // This is exported because some other packages may want to do direct HTTP probes.
-func DoHTTPProbe(url *url.URL, headers http.Header, client GetHTTPInterface) (probe.Result, string, error) {
+func DoHTTPProbe(url *url.URL, headers http.Header, client HTTPGetInterface) (probe.Result, string, error) {
 	req, err := http.NewRequest("GET", url.String(), nil)
 	if err != nil {
 		// Convert errors into failures to catch timeouts.
@@ -102,9 +93,9 @@ func DoHTTPProbe(url *url.URL, headers http.Header, client GetHTTPInterface) (pr
 	}
 	body := string(b)
 	if res.StatusCode >= http.StatusOK && res.StatusCode < http.StatusBadRequest {
-		klog.V(4).Infof("Probe succeeded for %s, Response: %v", url.String(), *res)
+		glog.V(4).Infof("Probe succeeded for %s, Response: %v", url.String(), *res)
 		return probe.Success, body, nil
 	}
-	klog.V(4).Infof("Probe failed for %s with request headers %v, response body: %v", url.String(), headers, body)
+	glog.V(4).Infof("Probe failed for %s with request headers %v, response body: %v", url.String(), headers, body)
 	return probe.Failure, fmt.Sprintf("HTTP probe failed with statuscode: %d", res.StatusCode), nil
 }

@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -32,31 +33,22 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/klog"
 )
 
 const (
-	// UIDConfigMapName is the Key used to persist UIDs to configmaps.
+	// Key used to persist UIDs to configmaps.
 	UIDConfigMapName = "ingress-uid"
-
-	// UIDNamespace is the namespace which contains the above config map
+	// Namespace which contains the above config map
 	UIDNamespace = metav1.NamespaceSystem
-
-	// UIDCluster is the data keys for looking up the clusters UID
-	UIDCluster = "uid"
-
-	// UIDProvider is the data keys for looking up the providers UID
-	UIDProvider = "provider-uid"
-
-	// UIDLengthBytes is the length of a UID
+	// Data keys for the specific ids
+	UIDCluster     = "uid"
+	UIDProvider    = "provider-uid"
 	UIDLengthBytes = 8
-
 	// Frequency of the updateFunc event handler being called
 	// This does not actually query the apiserver for current state - the local cache value is used.
 	updateFuncFrequency = 10 * time.Minute
 )
 
-// ClusterID is the struct for maintaining information about this cluster's ID
 type ClusterID struct {
 	idLock     sync.RWMutex
 	client     clientset.Interface
@@ -67,17 +59,17 @@ type ClusterID struct {
 }
 
 // Continually watches for changes to the cluster id config map
-func (g *Cloud) watchClusterID(stop <-chan struct{}) {
-	g.ClusterID = ClusterID{
+func (gce *GCECloud) watchClusterID() {
+	gce.ClusterID = ClusterID{
 		cfgMapKey: fmt.Sprintf("%v/%v", UIDNamespace, UIDConfigMapName),
-		client:    g.client,
+		client:    gce.client,
 	}
 
 	mapEventHandler := cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			m, ok := obj.(*v1.ConfigMap)
 			if !ok || m == nil {
-				klog.Errorf("Expected v1.ConfigMap, item=%+v, typeIsOk=%v", obj, ok)
+				glog.Errorf("Expected v1.ConfigMap, item=%+v, typeIsOk=%v", obj, ok)
 				return
 			}
 			if m.Namespace != UIDNamespace ||
@@ -85,13 +77,13 @@ func (g *Cloud) watchClusterID(stop <-chan struct{}) {
 				return
 			}
 
-			klog.V(4).Infof("Observed new configmap for clusteriD: %v, %v; setting local values", m.Name, m.Data)
-			g.ClusterID.update(m)
+			glog.V(4).Infof("Observed new configmap for clusteriD: %v, %v; setting local values", m.Name, m.Data)
+			gce.ClusterID.update(m)
 		},
 		UpdateFunc: func(old, cur interface{}) {
 			m, ok := cur.(*v1.ConfigMap)
 			if !ok || m == nil {
-				klog.Errorf("Expected v1.ConfigMap, item=%+v, typeIsOk=%v", cur, ok)
+				glog.Errorf("Expected v1.ConfigMap, item=%+v, typeIsOk=%v", cur, ok)
 				return
 			}
 
@@ -104,16 +96,16 @@ func (g *Cloud) watchClusterID(stop <-chan struct{}) {
 				return
 			}
 
-			klog.V(4).Infof("Observed updated configmap for clusteriD %v, %v; setting local values", m.Name, m.Data)
-			g.ClusterID.update(m)
+			glog.V(4).Infof("Observed updated configmap for clusteriD %v, %v; setting local values", m.Name, m.Data)
+			gce.ClusterID.update(m)
 		},
 	}
 
-	listerWatcher := cache.NewListWatchFromClient(g.ClusterID.client.CoreV1().RESTClient(), "configmaps", UIDNamespace, fields.Everything())
+	listerWatcher := cache.NewListWatchFromClient(gce.ClusterID.client.CoreV1().RESTClient(), "configmaps", UIDNamespace, fields.Everything())
 	var controller cache.Controller
-	g.ClusterID.store, controller = cache.NewInformer(newSingleObjectListerWatcher(listerWatcher, UIDConfigMapName), &v1.ConfigMap{}, updateFuncFrequency, mapEventHandler)
+	gce.ClusterID.store, controller = cache.NewInformer(newSingleObjectListerWatcher(listerWatcher, UIDConfigMapName), &v1.ConfigMap{}, updateFuncFrequency, mapEventHandler)
 
-	controller.Run(stop)
+	controller.Run(nil)
 }
 
 // GetID returns the id which is unique to this cluster
@@ -139,9 +131,9 @@ func (ci *ClusterID) GetID() (string, error) {
 	return *ci.clusterID, nil
 }
 
-// GetFederationID returns the id which could represent the entire Federation
+// GetFederationId returns the id which could represent the entire Federation
 // or just the cluster if not federated.
-func (ci *ClusterID) GetFederationID() (string, bool, error) {
+func (ci *ClusterID) GetFederationId() (string, bool, error) {
 	if err := ci.getOrInitialize(); err != nil {
 		return "", false, err
 	}
@@ -149,7 +141,7 @@ func (ci *ClusterID) GetFederationID() (string, bool, error) {
 	ci.idLock.RLock()
 	defer ci.idLock.RUnlock()
 	if ci.clusterID == nil {
-		return "", false, errors.New("could not retrieve cluster id")
+		return "", false, errors.New("Could not retrieve cluster id")
 	}
 
 	// If provider ID is not set, return false
@@ -165,7 +157,7 @@ func (ci *ClusterID) GetFederationID() (string, bool, error) {
 // before the watch has begun.
 func (ci *ClusterID) getOrInitialize() error {
 	if ci.store == nil {
-		return errors.New("Cloud.ClusterID is not ready. Call Initialize() before using")
+		return errors.New("GCECloud.ClusterID is not ready. Call Initialize() before using.")
 	}
 
 	if ci.clusterID != nil {
@@ -180,12 +172,12 @@ func (ci *ClusterID) getOrInitialize() error {
 	}
 
 	// The configmap does not exist - let's try creating one.
-	newID, err := makeUID()
+	newId, err := makeUID()
 	if err != nil {
 		return err
 	}
 
-	klog.V(4).Infof("Creating clusteriD: %v", newID)
+	glog.V(4).Infof("Creating clusteriD: %v", newId)
 	cfg := &v1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      UIDConfigMapName,
@@ -193,16 +185,16 @@ func (ci *ClusterID) getOrInitialize() error {
 		},
 	}
 	cfg.Data = map[string]string{
-		UIDCluster:  newID,
-		UIDProvider: newID,
+		UIDCluster:  newId,
+		UIDProvider: newId,
 	}
 
 	if _, err := ci.client.CoreV1().ConfigMaps(UIDNamespace).Create(cfg); err != nil {
-		klog.Errorf("GCE cloud provider failed to create %v config map to store cluster id: %v", ci.cfgMapKey, err)
+		glog.Errorf("GCE cloud provider failed to create %v config map to store cluster id: %v", ci.cfgMapKey, err)
 		return err
 	}
 
-	klog.V(2).Infof("Created a config map containing clusteriD: %v", newID)
+	glog.V(2).Infof("Created a config map containing clusteriD: %v", newId)
 	ci.update(cfg)
 	return nil
 }
@@ -219,7 +211,7 @@ func (ci *ClusterID) getConfigMap() (bool, error) {
 	m, ok := item.(*v1.ConfigMap)
 	if !ok || m == nil {
 		err = fmt.Errorf("Expected v1.ConfigMap, item=%+v, typeIsOk=%v", item, ok)
-		klog.Error(err)
+		glog.Error(err)
 		return false, err
 	}
 	ci.update(m)
@@ -232,8 +224,8 @@ func (ci *ClusterID) update(m *v1.ConfigMap) {
 	if clusterID, exists := m.Data[UIDCluster]; exists {
 		ci.clusterID = &clusterID
 	}
-	if provID, exists := m.Data[UIDProvider]; exists {
-		ci.providerID = &provID
+	if provId, exists := m.Data[UIDProvider]; exists {
+		ci.providerID = &provId
 	}
 }
 

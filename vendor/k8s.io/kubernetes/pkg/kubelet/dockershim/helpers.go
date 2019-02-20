@@ -22,15 +22,16 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blang/semver"
 	dockertypes "github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
 	dockerfilters "github.com/docker/docker/api/types/filters"
 	dockernat "github.com/docker/go-connections/nat"
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/pkg/credentialprovider"
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/v1alpha1/runtime"
 	"k8s.io/kubernetes/pkg/kubelet/dockershim/libdocker"
 	"k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/security/apparmor"
@@ -38,8 +39,12 @@ import (
 )
 
 const (
-	annotationPrefix     = "annotation."
-	securityOptSeparator = '='
+	annotationPrefix = "annotation."
+
+	// Docker changed the API for specifying options in v1.11
+	securityOptSeparatorChangeVersion = "1.23.0" // Corresponds to docker 1.11.x
+	securityOptSeparatorOld           = ':'
+	securityOptSeparatorNew           = '='
 )
 
 var (
@@ -48,6 +53,10 @@ var (
 	// this is hacky, but extremely common.
 	// if a container starts but the executable file is not found, runc gives a message that matches
 	startRE = regexp.MustCompile(`\\\\\\\"(.*)\\\\\\\": executable file not found`)
+
+	// Docker changes the security option separator from ':' to '=' in the 1.23
+	// API version.
+	optsSeparatorChangeVersion = semver.MustParse(securityOptSeparatorChangeVersion)
 
 	defaultSeccompOpt = []dockerOpt{{"seccomp", "unconfined", ""}}
 )
@@ -142,7 +151,7 @@ func generateMountBindings(mounts []*runtimeapi.Mount) []string {
 		case runtimeapi.MountPropagation_PROPAGATION_HOST_TO_CONTAINER:
 			attrs = append(attrs, "rslave")
 		default:
-			klog.Warningf("unknown propagation mode for hostPath %q", m.HostPath)
+			glog.Warningf("unknown propagation mode for hostPath %q", m.HostPath)
 			// Falls back to "private"
 		}
 
@@ -172,10 +181,8 @@ func makePortsAndBindings(pm []*runtimeapi.PortMapping) (dockernat.PortSet, map[
 			protocol = "/udp"
 		case runtimeapi.Protocol_TCP:
 			protocol = "/tcp"
-		case runtimeapi.Protocol_SCTP:
-			protocol = "/sctp"
 		default:
-			klog.Warningf("Unknown protocol %q: defaulting to TCP", port.Protocol)
+			glog.Warningf("Unknown protocol %q: defaulting to TCP", port.Protocol)
 			protocol = "/tcp"
 		}
 
@@ -283,12 +290,12 @@ func recoverFromCreationConflictIfNeeded(client libdocker.Interface, createConfi
 	}
 
 	id := matches[1]
-	klog.Warningf("Unable to create pod sandbox due to conflict. Attempting to remove sandbox %q", id)
+	glog.Warningf("Unable to create pod sandbox due to conflict. Attempting to remove sandbox %q", id)
 	if rmErr := client.RemoveContainer(id, dockertypes.ContainerRemoveOptions{RemoveVolumes: true}); rmErr == nil {
-		klog.V(2).Infof("Successfully removed conflicting container %q", id)
+		glog.V(2).Infof("Successfully removed conflicting container %q", id)
 		return nil, err
 	} else {
-		klog.Errorf("Failed to remove the conflicting container %q: %v", id, rmErr)
+		glog.Errorf("Failed to remove the conflicting container %q: %v", id, rmErr)
 		// Return if the error is not container not found error.
 		if !libdocker.IsContainerNotFoundError(rmErr) {
 			return nil, err
@@ -297,7 +304,7 @@ func recoverFromCreationConflictIfNeeded(client libdocker.Interface, createConfi
 
 	// randomize the name to avoid conflict.
 	createConfig.Name = randomizeName(createConfig.Name)
-	klog.V(2).Infof("Create the container with randomized name %s", createConfig.Name)
+	glog.V(2).Infof("Create the container with randomized name %s", createConfig.Name)
 	return client.CreateContainer(createConfig)
 }
 
@@ -312,6 +319,21 @@ func transformStartContainerError(err error) error {
 		return fmt.Errorf("executable not found in $PATH")
 	}
 	return err
+}
+
+// getSecurityOptSeparator returns the security option separator based on the
+// docker API version.
+// TODO: Remove this function along with the relevant code when we no longer
+// need to support docker 1.10.
+func getSecurityOptSeparator(v *semver.Version) rune {
+	switch v.Compare(optsSeparatorChangeVersion) {
+	case -1:
+		// Current version is less than the API change version; use the old
+		// separator.
+		return securityOptSeparatorOld
+	default:
+		return securityOptSeparatorNew
+	}
 }
 
 // ensureSandboxImageExists pulls the sandbox image when it's not present.
@@ -332,7 +354,7 @@ func ensureSandboxImageExists(client libdocker.Interface, image string) error {
 	keyring := credentialprovider.NewDockerKeyring()
 	creds, withCredentials := keyring.Lookup(repoToPull)
 	if !withCredentials {
-		klog.V(3).Infof("Pulling image %q without credentials", image)
+		glog.V(3).Infof("Pulling image %q without credentials", image)
 
 		err := client.PullImage(image, dockertypes.AuthConfig{}, dockertypes.ImagePullOptions{})
 		if err != nil {
@@ -344,7 +366,7 @@ func ensureSandboxImageExists(client libdocker.Interface, image string) error {
 
 	var pullErrs []error
 	for _, currentCreds := range creds {
-		authConfig := dockertypes.AuthConfig(credentialprovider.LazyProvide(currentCreds))
+		authConfig := credentialprovider.LazyProvide(currentCreds)
 		err := client.PullImage(image, authConfig, dockertypes.ImagePullOptions{})
 		// If there was no error, return success
 		if err == nil {

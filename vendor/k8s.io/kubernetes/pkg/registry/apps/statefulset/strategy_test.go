@@ -130,7 +130,7 @@ func TestStatefulsetDefaultGarbageCollectionPolicy(t *testing.T) {
 			false,
 		},
 		{
-			expectedGCPolicy: rest.DeleteDependents,
+			expectedGCPolicy: rest.OrphanDependents,
 			isNilRequestInfo: true,
 		},
 	}

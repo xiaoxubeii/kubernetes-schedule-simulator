@@ -22,10 +22,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 )
 
-// GroupName is the API group for abac
+// Group is the API group for abac
 const GroupName = "abac.authorization.kubernetes.io"
 
-// SchemeGroupVersion is the API group version used to register abac internal
 var SchemeGroupVersion = schema.GroupVersion{Group: GroupName, Version: runtime.APIVersionInternal}
 
 // Scheme is the default instance of runtime.Scheme to which types in the abac API group are api.Registry.
@@ -41,10 +40,8 @@ func init() {
 }
 
 var (
-	// SchemeBuilder is the scheme builder with scheme init functions to run for this API package
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
-	// AddToScheme is a common registration function for mapping packaged scoped group & version keys to a scheme
-	AddToScheme = SchemeBuilder.AddToScheme
+	AddToScheme   = SchemeBuilder.AddToScheme
 )
 
 func addKnownTypes(scheme *runtime.Scheme) error {

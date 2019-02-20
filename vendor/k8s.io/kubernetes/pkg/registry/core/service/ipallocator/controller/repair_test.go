@@ -22,10 +22,9 @@ import (
 	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 	"k8s.io/kubernetes/pkg/registry/core/service/ipallocator"
 )
 
@@ -56,7 +55,7 @@ func TestRepair(t *testing.T) {
 		item: &api.RangeAllocation{Range: "192.168.1.0/24"},
 	}
 	_, cidr, _ := net.ParseCIDR(ipregistry.item.Range)
-	r := NewRepair(0, fakeClient.Core(), fakeClient.Core(), cidr, ipregistry)
+	r := NewRepair(0, fakeClient.Core(), cidr, ipregistry)
 
 	if err := r.RunOnce(); err != nil {
 		t.Fatal(err)
@@ -69,7 +68,7 @@ func TestRepair(t *testing.T) {
 		item:      &api.RangeAllocation{Range: "192.168.1.0/24"},
 		updateErr: fmt.Errorf("test error"),
 	}
-	r = NewRepair(0, fakeClient.Core(), fakeClient.Core(), cidr, ipregistry)
+	r = NewRepair(0, fakeClient.Core(), cidr, ipregistry)
 	if err := r.RunOnce(); !strings.Contains(err.Error(), ": test error") {
 		t.Fatal(err)
 	}
@@ -97,7 +96,7 @@ func TestRepairLeak(t *testing.T) {
 		},
 	}
 
-	r := NewRepair(0, fakeClient.Core(), fakeClient.Core(), cidr, ipregistry)
+	r := NewRepair(0, fakeClient.Core(), cidr, ipregistry)
 	// Run through the "leak detection holdoff" loops.
 	for i := 0; i < (numRepairsBeforeLeakCleanup - 1); i++ {
 		if err := r.RunOnce(); err != nil {
@@ -135,29 +134,29 @@ func TestRepairWithExisting(t *testing.T) {
 	}
 
 	fakeClient := fake.NewSimpleClientset(
-		&corev1.Service{
+		&api.Service{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "one", Name: "one"},
-			Spec:       corev1.ServiceSpec{ClusterIP: "192.168.1.1"},
+			Spec:       api.ServiceSpec{ClusterIP: "192.168.1.1"},
 		},
-		&corev1.Service{
+		&api.Service{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "two", Name: "two"},
-			Spec:       corev1.ServiceSpec{ClusterIP: "192.168.1.100"},
+			Spec:       api.ServiceSpec{ClusterIP: "192.168.1.100"},
 		},
-		&corev1.Service{ // outside CIDR, will be dropped
+		&api.Service{ // outside CIDR, will be dropped
 			ObjectMeta: metav1.ObjectMeta{Namespace: "three", Name: "three"},
-			Spec:       corev1.ServiceSpec{ClusterIP: "192.168.0.1"},
+			Spec:       api.ServiceSpec{ClusterIP: "192.168.0.1"},
 		},
-		&corev1.Service{ // empty, ignored
+		&api.Service{ // empty, ignored
 			ObjectMeta: metav1.ObjectMeta{Namespace: "four", Name: "four"},
-			Spec:       corev1.ServiceSpec{ClusterIP: ""},
+			Spec:       api.ServiceSpec{ClusterIP: ""},
 		},
-		&corev1.Service{ // duplicate, dropped
+		&api.Service{ // duplicate, dropped
 			ObjectMeta: metav1.ObjectMeta{Namespace: "five", Name: "five"},
-			Spec:       corev1.ServiceSpec{ClusterIP: "192.168.1.1"},
+			Spec:       api.ServiceSpec{ClusterIP: "192.168.1.1"},
 		},
-		&corev1.Service{ // headless
+		&api.Service{ // headless
 			ObjectMeta: metav1.ObjectMeta{Namespace: "six", Name: "six"},
-			Spec:       corev1.ServiceSpec{ClusterIP: "None"},
+			Spec:       api.ServiceSpec{ClusterIP: "None"},
 		},
 	)
 
@@ -170,7 +169,7 @@ func TestRepairWithExisting(t *testing.T) {
 			Data:  dst.Data,
 		},
 	}
-	r := NewRepair(0, fakeClient.Core(), fakeClient.Core(), cidr, ipregistry)
+	r := NewRepair(0, fakeClient.Core(), cidr, ipregistry)
 	if err := r.RunOnce(); err != nil {
 		t.Fatal(err)
 	}

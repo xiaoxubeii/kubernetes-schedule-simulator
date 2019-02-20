@@ -26,9 +26,9 @@ import (
 
 	"k8s.io/api/core/v1"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
 	"k8s.io/kubernetes/pkg/volume/util/types"
+	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
 )
 
 // DesiredStateOfWorld defines a set of thread-safe operations for the kubelet
@@ -98,13 +98,6 @@ type DesiredStateOfWorld interface {
 	// with pod's unique name. This map can be used to determine which pod is currently
 	// in desired state of world.
 	GetPods() map[types.UniquePodName]bool
-
-	// VolumeExistsWithSpecName returns true if the given volume specified with the
-	// volume spec name (a.k.a., InnerVolumeSpecName) exists in the list of
-	// volumes that should be attached to this node.
-	// If a pod with the same name does not exist under the specified
-	// volume, false is returned.
-	VolumeExistsWithSpecName(podName types.UniquePodName, volumeSpecName string) bool
 }
 
 // VolumeToMount represents a volume that is attached to this node and needs to
@@ -150,10 +143,6 @@ type volumeToMount struct {
 	// the volume.Attacher interface
 	pluginIsAttachable bool
 
-	// pluginIsDeviceMountable indicates that the plugin for this volume implements
-	// the volume.DeviceMounter interface
-	pluginIsDeviceMountable bool
-
 	// volumeGidValue contains the value of the GID annotation, if present.
 	volumeGidValue string
 
@@ -175,7 +164,7 @@ type podToMount struct {
 	// generate the volume plugin object, and passed to plugin methods.
 	// For non-PVC volumes this is the same as defined in the pod object. For
 	// PVC volumes it is from the dereferenced PV object.
-	volumeSpec *volume.Spec
+	spec *volume.Spec
 
 	// outerVolumeSpecName is the volume.Spec.Name() of the volume as referenced
 	// directly in the pod. If the volume was referenced through a persistent
@@ -210,7 +199,7 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 		// For attachable volumes, use the unique volume name as reported by
 		// the plugin.
 		volumeName, err =
-			util.GetUniqueVolumeNameFromSpec(volumePlugin, volumeSpec)
+			volumehelper.GetUniqueVolumeNameFromSpec(volumePlugin, volumeSpec)
 		if err != nil {
 			return "", fmt.Errorf(
 				"failed to GetUniqueVolumeNameFromSpec for volumeSpec %q using volume plugin %q err=%v",
@@ -221,20 +210,19 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 	} else {
 		// For non-attachable volumes, generate a unique name based on the pod
 		// namespace and name and the name of the volume within the pod.
-		volumeName = util.GetUniqueVolumeNameForNonAttachableVolume(podName, volumePlugin, volumeSpec)
+		volumeName = volumehelper.GetUniqueVolumeNameForNonAttachableVolume(podName, volumePlugin, volumeSpec)
 	}
 
-	deviceMountable := dsw.isDeviceMountableVolume(volumeSpec)
-
-	if _, volumeExists := dsw.volumesToMount[volumeName]; !volumeExists {
-		dsw.volumesToMount[volumeName] = volumeToMount{
-			volumeName:              volumeName,
-			podsToMount:             make(map[types.UniquePodName]podToMount),
-			pluginIsAttachable:      attachable,
-			pluginIsDeviceMountable: deviceMountable,
-			volumeGidValue:          volumeGidValue,
-			reportedInUse:           false,
+	volumeObj, volumeExists := dsw.volumesToMount[volumeName]
+	if !volumeExists {
+		volumeObj = volumeToMount{
+			volumeName:         volumeName,
+			podsToMount:        make(map[types.UniquePodName]podToMount),
+			pluginIsAttachable: attachable,
+			volumeGidValue:     volumeGidValue,
+			reportedInUse:      false,
 		}
+		dsw.volumesToMount[volumeName] = volumeObj
 	}
 
 	// Create new podToMount object. If it already exists, it is refreshed with
@@ -243,9 +231,10 @@ func (dsw *desiredStateOfWorld) AddPodToVolume(
 	dsw.volumesToMount[volumeName].podsToMount[podName] = podToMount{
 		podName:             podName,
 		pod:                 pod,
-		volumeSpec:          volumeSpec,
+		spec:                volumeSpec,
 		outerVolumeSpecName: outerVolumeSpecName,
 	}
+
 	return volumeName, nil
 }
 
@@ -314,19 +303,6 @@ func (dsw *desiredStateOfWorld) PodExistsInVolume(
 	return podExists
 }
 
-func (dsw *desiredStateOfWorld) VolumeExistsWithSpecName(podName types.UniquePodName, volumeSpecName string) bool {
-	dsw.RLock()
-	defer dsw.RUnlock()
-	for _, volumeObj := range dsw.volumesToMount {
-		for name, podObj := range volumeObj.podsToMount {
-			if podName == name && podObj.volumeSpec.Name() == volumeSpecName {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func (dsw *desiredStateOfWorld) GetPods() map[types.UniquePodName]bool {
 	dsw.RLock()
 	defer dsw.RUnlock()
@@ -353,15 +329,14 @@ func (dsw *desiredStateOfWorld) GetVolumesToMount() []VolumeToMount {
 				volumesToMount,
 				VolumeToMount{
 					VolumeToMount: operationexecutor.VolumeToMount{
-						VolumeName:              volumeName,
-						PodName:                 podName,
-						Pod:                     podObj.pod,
-						VolumeSpec:              podObj.volumeSpec,
-						PluginIsAttachable:      volumeObj.pluginIsAttachable,
-						PluginIsDeviceMountable: volumeObj.pluginIsDeviceMountable,
-						OuterVolumeSpecName:     podObj.outerVolumeSpecName,
-						VolumeGidValue:          volumeObj.volumeGidValue,
-						ReportedInUse:           volumeObj.reportedInUse}})
+						VolumeName:          volumeName,
+						PodName:             podName,
+						Pod:                 podObj.pod,
+						VolumeSpec:          podObj.spec,
+						PluginIsAttachable:  volumeObj.pluginIsAttachable,
+						OuterVolumeSpecName: podObj.outerVolumeSpecName,
+						VolumeGidValue:      volumeObj.volumeGidValue,
+						ReportedInUse:       volumeObj.reportedInUse}})
 		}
 	}
 	return volumesToMount
@@ -373,18 +348,6 @@ func (dsw *desiredStateOfWorld) isAttachableVolume(volumeSpec *volume.Spec) bool
 	if attachableVolumePlugin != nil {
 		volumeAttacher, err := attachableVolumePlugin.NewAttacher()
 		if err == nil && volumeAttacher != nil {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (dsw *desiredStateOfWorld) isDeviceMountableVolume(volumeSpec *volume.Spec) bool {
-	deviceMountableVolumePlugin, _ := dsw.volumePluginMgr.FindDeviceMountablePluginBySpec(volumeSpec)
-	if deviceMountableVolumePlugin != nil {
-		volumeDeviceMounter, err := deviceMountableVolumePlugin.NewDeviceMounter()
-		if err == nil && volumeDeviceMounter != nil {
 			return true
 		}
 	}

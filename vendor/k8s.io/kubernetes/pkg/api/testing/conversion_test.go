@@ -21,10 +21,9 @@ import (
 	"math/rand"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/api/apitesting/fuzzer"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/testing/fuzzer"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/api/testapi"
@@ -47,11 +46,11 @@ func BenchmarkPodConversion(b *testing.B) {
 	scheme := legacyscheme.Scheme
 	for i := 0; i < b.N; i++ {
 		pod := &items[i%width]
-		versionedObj, err := scheme.UnsafeConvertToVersion(pod, schema.GroupVersion{Group: "", Version: "v1"})
+		versionedObj, err := scheme.UnsafeConvertToVersion(pod, legacyscheme.Registry.GroupOrDie(api.GroupName).GroupVersion)
 		if err != nil {
 			b.Fatalf("Conversion error: %v", err)
 		}
-		if _, err = scheme.UnsafeConvertToVersion(versionedObj, schema.GroupVersion{Group: "", Version: runtime.APIVersionInternal}); err != nil {
+		if _, err = scheme.UnsafeConvertToVersion(versionedObj, testapi.Default.InternalGroupVersion()); err != nil {
 			b.Fatalf("Conversion error: %v", err)
 		}
 	}
@@ -71,11 +70,11 @@ func BenchmarkNodeConversion(b *testing.B) {
 	var result *api.Node
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		versionedObj, err := scheme.UnsafeConvertToVersion(&node, schema.GroupVersion{Group: "", Version: "v1"})
+		versionedObj, err := scheme.UnsafeConvertToVersion(&node, legacyscheme.Registry.GroupOrDie(api.GroupName).GroupVersion)
 		if err != nil {
 			b.Fatalf("Conversion error: %v", err)
 		}
-		obj, err := scheme.UnsafeConvertToVersion(versionedObj, schema.GroupVersion{Group: "", Version: runtime.APIVersionInternal})
+		obj, err := scheme.UnsafeConvertToVersion(versionedObj, testapi.Default.InternalGroupVersion())
 		if err != nil {
 			b.Fatalf("Conversion error: %v", err)
 		}
@@ -101,11 +100,11 @@ func BenchmarkReplicationControllerConversion(b *testing.B) {
 	var result *api.ReplicationController
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		versionedObj, err := scheme.UnsafeConvertToVersion(&replicationController, schema.GroupVersion{Group: "", Version: "v1"})
+		versionedObj, err := scheme.UnsafeConvertToVersion(&replicationController, legacyscheme.Registry.GroupOrDie(api.GroupName).GroupVersion)
 		if err != nil {
 			b.Fatalf("Conversion error: %v", err)
 		}
-		obj, err := scheme.UnsafeConvertToVersion(versionedObj, schema.GroupVersion{Group: "", Version: runtime.APIVersionInternal})
+		obj, err := scheme.UnsafeConvertToVersion(versionedObj, testapi.Default.InternalGroupVersion())
 		if err != nil {
 			b.Fatalf("Conversion error: %v", err)
 		}

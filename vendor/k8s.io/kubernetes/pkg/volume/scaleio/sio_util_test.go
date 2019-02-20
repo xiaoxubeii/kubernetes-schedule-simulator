@@ -159,11 +159,11 @@ func TestUtilSaveConfig(t *testing.T) {
 		confKey.sslEnabled: "false",
 	}
 	if err := saveConfig(config, data); err != nil {
-		t.Fatalf("failed while saving data: %v", err)
+		t.Fatal("failed while saving data", err)
 	}
 	file, err := os.Open(config)
 	if err != nil {
-		t.Fatalf("failed to open conf file %s: %v", config, err)
+		t.Fatal("failed to open conf file: ", file)
 	}
 	defer file.Close()
 	dataRcvd := map[string]string{}

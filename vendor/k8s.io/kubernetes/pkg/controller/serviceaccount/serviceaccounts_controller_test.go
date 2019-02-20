@@ -29,6 +29,11 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 )
 
+type serverResponse struct {
+	statusCode int
+	obj        interface{}
+}
+
 func TestServiceAccountCreation(t *testing.T) {
 	ns := metav1.NamespaceDefault
 

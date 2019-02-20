@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	"k8s.io/kubernetes/pkg/volume"
 )
@@ -39,13 +39,11 @@ const (
 	mountDeviceCmd   = "mountdevice"
 
 	detachCmd        = "detach"
+	waitForDetachCmd = "waitfordetach"
 	unmountDeviceCmd = "unmountdevice"
 
 	mountCmd   = "mount"
 	unmountCmd = "unmount"
-
-	expandVolumeCmd = "expandvolume"
-	expandFSCmd     = "expandfs"
 
 	// Option keys
 	optionFSType         = "kubernetes.io/fsType"
@@ -70,7 +68,7 @@ const (
 )
 
 var (
-	errTimeout = fmt.Errorf("Timeout")
+	TimeoutError = fmt.Errorf("Timeout")
 )
 
 // DriverCall implements the basic contract between FlexVolume and its driver.
@@ -95,12 +93,10 @@ func (plugin *flexVolumePlugin) NewDriverCallWithTimeout(command string, timeout
 	}
 }
 
-// Append appends arg into driver call argument list
 func (dc *DriverCall) Append(arg string) {
 	dc.args = append(dc.args, arg)
 }
 
-// AppendSpec appends volume spec to driver call argument list
 func (dc *DriverCall) AppendSpec(spec *volume.Spec, host volume.VolumeHost, extraOptions map[string]string) error {
 	optionsForDriver, err := NewOptionsForDriver(spec, host, extraOptions)
 	if err != nil {
@@ -116,7 +112,6 @@ func (dc *DriverCall) AppendSpec(spec *volume.Spec, host volume.VolumeHost, extr
 	return nil
 }
 
-// Run executes the driver call
 func (dc *DriverCall) Run() (*DriverStatus, error) {
 	if dc.plugin.isUnsupported(dc.Command) {
 		return nil, errors.New(StatusNotSupported)
@@ -137,17 +132,17 @@ func (dc *DriverCall) Run() (*DriverStatus, error) {
 	output, execErr := cmd.CombinedOutput()
 	if execErr != nil {
 		if timeout {
-			return nil, errTimeout
+			return nil, TimeoutError
 		}
 		_, err := handleCmdResponse(dc.Command, output)
 		if err == nil {
-			klog.Errorf("FlexVolume: driver bug: %s: exec error (%s) but no error in response.", execPath, execErr)
+			glog.Errorf("FlexVolume: driver bug: %s: exec error (%s) but no error in response.", execPath, execErr)
 			return nil, execErr
 		}
 		if isCmdNotSupportedErr(err) {
 			dc.plugin.unsupported(dc.Command)
 		} else {
-			klog.Warningf("FlexVolume: driver call failed: executable: %s, args: %s, error: %s, output: %q", execPath, dc.args, execErr.Error(), output)
+			glog.Warningf("FlexVolume: driver call failed: executable: %s, args: %s, error: %s, output: %q", execPath, dc.args, execErr.Error(), output)
 		}
 		return nil, err
 	}
@@ -166,27 +161,11 @@ func (dc *DriverCall) Run() (*DriverStatus, error) {
 // OptionsForDriver represents the spec given to the driver.
 type OptionsForDriver map[string]string
 
-// NewOptionsForDriver create driver options given volume spec
 func NewOptionsForDriver(spec *volume.Spec, host volume.VolumeHost, extraOptions map[string]string) (OptionsForDriver, error) {
-
-	volSourceFSType, err := getFSType(spec)
-	if err != nil {
-		return nil, err
-	}
-
-	readOnly, err := getReadOnly(spec)
-	if err != nil {
-		return nil, err
-	}
-
-	volSourceOptions, err := getOptions(spec)
-	if err != nil {
-		return nil, err
-	}
-
+	volSource, readOnly := getVolumeSource(spec)
 	options := map[string]string{}
 
-	options[optionFSType] = volSourceFSType
+	options[optionFSType] = volSource.FSType
 
 	if readOnly {
 		options[optionReadWrite] = "ro"
@@ -200,7 +179,7 @@ func NewOptionsForDriver(spec *volume.Spec, host volume.VolumeHost, extraOptions
 		options[key] = value
 	}
 
-	for key, value := range volSourceOptions {
+	for key, value := range volSource.Options {
 		options[key] = value
 	}
 
@@ -224,26 +203,17 @@ type DriverStatus struct {
 	// By default we assume all the capabilities are supported.
 	// If the plugin does not support a capability, it can return false for that capability.
 	Capabilities *DriverCapabilities `json:",omitempty"`
-	// Returns the actual size of the volume after resizing is done, the size is in bytes.
-	ActualVolumeSize int64 `json:"volumeNewSize,omitempty"`
 }
 
-// DriverCapabilities represents what driver can do
 type DriverCapabilities struct {
-	Attach           bool `json:"attach"`
-	SELinuxRelabel   bool `json:"selinuxRelabel"`
-	SupportsMetrics  bool `json:"supportsMetrics"`
-	FSGroup          bool `json:"fsGroup"`
-	RequiresFSResize bool `json:"requiresFSResize"`
+	Attach         bool `json:"attach"`
+	SELinuxRelabel bool `json:"selinuxRelabel"`
 }
 
 func defaultCapabilities() *DriverCapabilities {
 	return &DriverCapabilities{
-		Attach:           true,
-		SELinuxRelabel:   true,
-		SupportsMetrics:  false,
-		FSGroup:          true,
-		RequiresFSResize: true,
+		Attach:         true,
+		SELinuxRelabel: true,
 	}
 }
 
@@ -264,14 +234,14 @@ func handleCmdResponse(cmd string, output []byte) (*DriverStatus, error) {
 		Capabilities: defaultCapabilities(),
 	}
 	if err := json.Unmarshal(output, &status); err != nil {
-		klog.Errorf("Failed to unmarshal output for command: %s, output: %q, error: %s", cmd, string(output), err.Error())
+		glog.Errorf("Failed to unmarshal output for command: %s, output: %q, error: %s", cmd, string(output), err.Error())
 		return nil, err
 	} else if status.Status == StatusNotSupported {
-		klog.V(5).Infof("%s command is not supported by the driver", cmd)
+		glog.V(5).Infof("%s command is not supported by the driver", cmd)
 		return nil, errors.New(status.Status)
 	} else if status.Status != StatusSuccess {
 		errMsg := fmt.Sprintf("%s command failed, status: %s, reason: %s", cmd, status.Status, status.Message)
-		klog.Errorf(errMsg)
+		glog.Errorf(errMsg)
 		return nil, fmt.Errorf("%s", errMsg)
 	}
 

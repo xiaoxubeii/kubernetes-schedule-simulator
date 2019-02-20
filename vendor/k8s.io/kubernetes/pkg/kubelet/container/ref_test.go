@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	_ "k8s.io/kubernetes/pkg/apis/core/install"
 )
 
@@ -67,14 +68,14 @@ func TestGenerateContainerRef(t *testing.T) {
 		okPod = v1.Pod{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       "Pod",
-				APIVersion: "v1",
+				APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:            "ok",
 				Namespace:       "test-ns",
 				UID:             "bar",
 				ResourceVersion: "42",
-				SelfLink:        "/api/v1/pods/foo",
+				SelfLink:        "/api/" + legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String() + "/pods/foo",
 			},
 			Spec: v1.PodSpec{
 				Containers: []v1.Container{
@@ -91,7 +92,7 @@ func TestGenerateContainerRef(t *testing.T) {
 	noSelfLinkPod.Kind = ""
 	noSelfLinkPod.APIVersion = ""
 	noSelfLinkPod.ObjectMeta.SelfLink = ""
-	defaultedSelfLinkPod.ObjectMeta.SelfLink = "/api/v1/pods/ok"
+	defaultedSelfLinkPod.ObjectMeta.SelfLink = "/api/" + legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String() + "/pods/ok"
 
 	cases := []struct {
 		name      string
@@ -108,7 +109,7 @@ func TestGenerateContainerRef(t *testing.T) {
 			},
 			expected: &v1.ObjectReference{
 				Kind:            "Pod",
-				APIVersion:      "v1",
+				APIVersion:      legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
 				Name:            "ok",
 				Namespace:       "test-ns",
 				UID:             "bar",
@@ -123,7 +124,7 @@ func TestGenerateContainerRef(t *testing.T) {
 			container: &v1.Container{},
 			expected: &v1.ObjectReference{
 				Kind:            "Pod",
-				APIVersion:      "v1",
+				APIVersion:      legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
 				Name:            "ok",
 				Namespace:       "test-ns",
 				UID:             "bar",
@@ -147,7 +148,7 @@ func TestGenerateContainerRef(t *testing.T) {
 			},
 			expected: &v1.ObjectReference{
 				Kind:            "Pod",
-				APIVersion:      "v1",
+				APIVersion:      legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
 				Name:            "ok",
 				Namespace:       "test-ns",
 				UID:             "bar",
@@ -164,7 +165,7 @@ func TestGenerateContainerRef(t *testing.T) {
 			},
 			expected: &v1.ObjectReference{
 				Kind:            "Pod",
-				APIVersion:      "v1",
+				APIVersion:      legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
 				Name:            "ok",
 				Namespace:       "test-ns",
 				UID:             "bar",

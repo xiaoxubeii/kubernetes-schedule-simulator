@@ -27,7 +27,9 @@ type runtimeState struct {
 	lastBaseRuntimeSync      time.Time
 	baseRuntimeSyncThreshold time.Duration
 	networkError             error
+	internalError            error
 	cidr                     string
+	initError                error
 	healthChecks             []*healthCheck
 }
 
@@ -52,6 +54,12 @@ func (s *runtimeState) setRuntimeSync(t time.Time) {
 	s.lastBaseRuntimeSync = t
 }
 
+func (s *runtimeState) setInternalError(err error) {
+	s.Lock()
+	defer s.Unlock()
+	s.internalError = err
+}
+
 func (s *runtimeState) setNetworkState(err error) {
 	s.Lock()
 	defer s.Unlock()
@@ -70,14 +78,24 @@ func (s *runtimeState) podCIDR() string {
 	return s.cidr
 }
 
+func (s *runtimeState) setInitError(err error) {
+	s.Lock()
+	defer s.Unlock()
+	s.initError = err
+}
+
 func (s *runtimeState) runtimeErrors() []string {
 	s.RLock()
 	defer s.RUnlock()
 	var ret []string
-	if s.lastBaseRuntimeSync.IsZero() {
-		ret = append(ret, "container runtime status check may not have completed yet")
-	} else if !s.lastBaseRuntimeSync.Add(s.baseRuntimeSyncThreshold).After(time.Now()) {
+	if s.initError != nil {
+		ret = append(ret, s.initError.Error())
+	}
+	if !s.lastBaseRuntimeSync.Add(s.baseRuntimeSyncThreshold).After(time.Now()) {
 		ret = append(ret, "container runtime is down")
+	}
+	if s.internalError != nil {
+		ret = append(ret, s.internalError.Error())
 	}
 	for _, hc := range s.healthChecks {
 		if ok, err := hc.fn(); !ok {
@@ -105,5 +123,6 @@ func newRuntimeState(
 		lastBaseRuntimeSync:      time.Time{},
 		baseRuntimeSyncThreshold: runtimeSyncThreshold,
 		networkError:             fmt.Errorf("network state unknown"),
+		internalError:            nil,
 	}
 }

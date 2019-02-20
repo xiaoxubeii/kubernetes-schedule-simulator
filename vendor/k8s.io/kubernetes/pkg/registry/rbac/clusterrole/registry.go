@@ -17,24 +17,27 @@ limitations under the License.
 package clusterrole
 
 import (
-	"context"
-
-	rbacv1 "k8s.io/api/rbac/v1"
+	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/kubernetes/pkg/apis/rbac"
-	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
 )
 
 // Registry is an interface for things that know how to store ClusterRoles.
 type Registry interface {
-	GetClusterRole(ctx context.Context, name string, options *metav1.GetOptions) (*rbacv1.ClusterRole, error)
+	ListClusterRoles(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (*rbac.ClusterRoleList, error)
+	CreateClusterRole(ctx genericapirequest.Context, clusterRole *rbac.ClusterRole, createValidation rest.ValidateObjectFunc) error
+	UpdateClusterRole(ctx genericapirequest.Context, clusterRole *rbac.ClusterRole, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc) error
+	GetClusterRole(ctx genericapirequest.Context, name string, options *metav1.GetOptions) (*rbac.ClusterRole, error)
+	DeleteClusterRole(ctx genericapirequest.Context, name string) error
+	WatchClusterRoles(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (watch.Interface, error)
 }
 
 // storage puts strong typing around storage calls
 type storage struct {
-	rest.Getter
+	rest.StandardStorage
 }
 
 // NewRegistry returns a new Registry interface for the given Storage. Any mismatched
@@ -43,17 +46,40 @@ func NewRegistry(s rest.StandardStorage) Registry {
 	return &storage{s}
 }
 
-func (s *storage) GetClusterRole(ctx context.Context, name string, options *metav1.GetOptions) (*rbacv1.ClusterRole, error) {
-	obj, err := s.Get(ctx, name, options)
+func (s *storage) ListClusterRoles(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (*rbac.ClusterRoleList, error) {
+	obj, err := s.List(ctx, options)
 	if err != nil {
 		return nil, err
 	}
 
-	ret := &rbacv1.ClusterRole{}
-	if err := rbacv1helpers.Convert_rbac_ClusterRole_To_v1_ClusterRole(obj.(*rbac.ClusterRole), ret, nil); err != nil {
+	return obj.(*rbac.ClusterRoleList), nil
+}
+
+func (s *storage) CreateClusterRole(ctx genericapirequest.Context, clusterRole *rbac.ClusterRole, createValidation rest.ValidateObjectFunc) error {
+	_, err := s.Create(ctx, clusterRole, createValidation, false)
+	return err
+}
+
+func (s *storage) UpdateClusterRole(ctx genericapirequest.Context, clusterRole *rbac.ClusterRole, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc) error {
+	_, _, err := s.Update(ctx, clusterRole.Name, rest.DefaultUpdatedObjectInfo(clusterRole), createValidation, updateValidation)
+	return err
+}
+
+func (s *storage) WatchClusterRoles(ctx genericapirequest.Context, options *metainternalversion.ListOptions) (watch.Interface, error) {
+	return s.Watch(ctx, options)
+}
+
+func (s *storage) GetClusterRole(ctx genericapirequest.Context, name string, options *metav1.GetOptions) (*rbac.ClusterRole, error) {
+	obj, err := s.Get(ctx, name, options)
+	if err != nil {
 		return nil, err
 	}
-	return ret, nil
+	return obj.(*rbac.ClusterRole), nil
+}
+
+func (s *storage) DeleteClusterRole(ctx genericapirequest.Context, name string) error {
+	_, _, err := s.Delete(ctx, name, nil)
+	return err
 }
 
 // AuthorizerAdapter adapts the registry to the authorizer interface
@@ -61,6 +87,6 @@ type AuthorizerAdapter struct {
 	Registry Registry
 }
 
-func (a AuthorizerAdapter) GetClusterRole(name string) (*rbacv1.ClusterRole, error) {
+func (a AuthorizerAdapter) GetClusterRole(name string) (*rbac.ClusterRole, error) {
 	return a.Registry.GetClusterRole(genericapirequest.NewContext(), name, &metav1.GetOptions{})
 }

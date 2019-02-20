@@ -61,13 +61,13 @@ func TestGetPreferredAddress(t *testing.T) {
 			Preferences:   []v1.NodeAddressType{v1.NodeHostName, v1.NodeExternalIP},
 			ExpectAddress: "status-hostname",
 		},
-		"label address ignored": {
+		"found label address": {
 			Labels: map[string]string{kubeletapis.LabelHostname: "label-hostname"},
 			Addresses: []v1.NodeAddress{
 				{Type: v1.NodeExternalIP, Address: "1.2.3.5"},
 			},
 			Preferences:   []v1.NodeAddressType{v1.NodeHostName, v1.NodeExternalIP},
-			ExpectAddress: "1.2.3.5",
+			ExpectAddress: "label-hostname",
 		},
 	}
 
@@ -87,37 +87,5 @@ func TestGetPreferredAddress(t *testing.T) {
 		if address != tc.ExpectAddress {
 			t.Errorf("%s: expected address=%q, got %q", k, tc.ExpectAddress, address)
 		}
-	}
-}
-
-func TestGetHostname(t *testing.T) {
-	testCases := []struct {
-		hostName         string
-		expectedHostName string
-		expectError      bool
-	}{
-		{
-			hostName:    "   ",
-			expectError: true,
-		},
-		{
-			hostName:         " abc  ",
-			expectedHostName: "abc",
-			expectError:      false,
-		},
-	}
-
-	for idx, test := range testCases {
-		hostName, err := GetHostname(test.hostName)
-		if err != nil && !test.expectError {
-			t.Errorf("[%d]: unexpected error: %s", idx, err)
-		}
-		if err == nil && test.expectError {
-			t.Errorf("[%d]: expected error, got none", idx)
-		}
-		if test.expectedHostName != hostName {
-			t.Errorf("[%d]: expected output %q, got %q", idx, test.expectedHostName, hostName)
-		}
-
 	}
 }

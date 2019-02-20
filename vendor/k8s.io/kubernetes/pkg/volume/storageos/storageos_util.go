@@ -25,9 +25,9 @@ import (
 
 	"k8s.io/kubernetes/pkg/util/mount"
 
+	"github.com/golang/glog"
 	storageosapi "github.com/storageos/go-api"
 	storageostypes "github.com/storageos/go-api/types"
-	"k8s.io/klog"
 )
 
 const (
@@ -69,7 +69,6 @@ type apiImplementer interface {
 	VolumeMount(opts storageostypes.VolumeMountOptions) error
 	VolumeUnmount(opts storageostypes.VolumeUnmountOptions) error
 	VolumeDelete(opt storageostypes.DeleteOptions) error
-	Controller(ref string) (*storageostypes.Controller, error)
 }
 
 // storageosUtil is the utility structure to interact with the StorageOS API.
@@ -88,7 +87,7 @@ func (u *storageosUtil) NewAPI(apiCfg *storageosAPIConfig) error {
 			apiPass:    defaultAPIPassword,
 			apiVersion: defaultAPIVersion,
 		}
-		klog.V(4).Infof("Using default StorageOS API settings: addr %s, version: %s", apiCfg.apiAddr, defaultAPIVersion)
+		glog.V(4).Infof("Using default StorageOS API settings: addr %s, version: %s", apiCfg.apiAddr, defaultAPIVersion)
 	}
 
 	api, err := storageosapi.NewVersionedClient(apiCfg.apiAddr, defaultAPIVersion)
@@ -122,7 +121,7 @@ func (u *storageosUtil) CreateVolume(p *storageosProvisioner) (*storageosVolume,
 
 	vol, err := u.api.VolumeCreate(opts)
 	if err != nil {
-		klog.Errorf("volume create failed for volume %q (%v)", opts.Name, err)
+		glog.Errorf("volume create failed for volume %q (%v)", opts.Name, err)
 		return nil, err
 	}
 	return &storageosVolume{
@@ -149,15 +148,9 @@ func (u *storageosUtil) AttachVolume(b *storageosMounter) (string, error) {
 		return "", err
 	}
 
-	// Get the node's device path from the API, falling back to the default if
-	// not set on the node.
-	if b.deviceDir == "" {
-		b.deviceDir = u.DeviceDir(b)
-	}
-
 	vol, err := u.api.Volume(b.volNamespace, b.volName)
 	if err != nil {
-		klog.Warningf("volume retrieve failed for volume %q with namespace %q (%v)", b.volName, b.volNamespace, err)
+		glog.Warningf("volume retrieve failed for volume %q with namespace %q (%v)", b.volName, b.volNamespace, err)
 		return "", err
 	}
 
@@ -170,17 +163,16 @@ func (u *storageosUtil) AttachVolume(b *storageosMounter) (string, error) {
 			Namespace: vol.Namespace,
 		}
 		if err := u.api.VolumeUnmount(opts); err != nil {
-			klog.Warningf("Couldn't clear existing StorageOS mount reference: %v", err)
+			glog.Warningf("Couldn't clear existing StorageOS mount reference: %v", err)
 		}
 	}
 
-	srcPath := path.Join(b.deviceDir, vol.ID)
+	srcPath := path.Join(b.devicePath, vol.ID)
 	dt, err := pathDeviceType(srcPath)
 	if err != nil {
-		klog.Warningf("volume source path %q for volume %q not ready (%v)", srcPath, b.volName, err)
+		glog.Warningf("volume source path %q for volume %q not ready (%v)", srcPath, b.volName, err)
 		return "", err
 	}
-
 	switch dt {
 	case modeBlock:
 		return srcPath, nil
@@ -217,7 +209,7 @@ func (u *storageosUtil) MountVolume(b *storageosMounter, mntDevice, deviceMountP
 		}
 	}
 	if err = os.MkdirAll(deviceMountPath, 0750); err != nil {
-		klog.Errorf("mkdir failed on disk %s (%v)", deviceMountPath, err)
+		glog.Errorf("mkdir failed on disk %s (%v)", deviceMountPath, err)
 		return err
 	}
 	options := []string{}
@@ -255,7 +247,7 @@ func (u *storageosUtil) UnmountVolume(b *storageosUnmounter) error {
 	if err := u.NewAPI(b.apiCfg); err != nil {
 		// We can't always get the config we need, so allow the unmount to
 		// succeed even if we can't remove the mount reference from the API.
-		klog.V(4).Infof("Could not remove mount reference in the StorageOS API as no credentials available to the unmount operation")
+		glog.V(4).Infof("Could not remove mount reference in the StorageOS API as no credentials available to the unmount operation")
 		return nil
 	}
 
@@ -285,22 +277,6 @@ func (u *storageosUtil) DeleteVolume(d *storageosDeleter) error {
 	return u.api.VolumeDelete(opts)
 }
 
-// Get the node's device path from the API, falling back to the default if not
-// specified.
-func (u *storageosUtil) DeviceDir(b *storageosMounter) string {
-
-	ctrl, err := u.api.Controller(b.plugin.host.GetHostName())
-	if err != nil {
-		klog.Warningf("node device path lookup failed: %v", err)
-		return defaultDeviceDir
-	}
-	if ctrl == nil || ctrl.DeviceDir == "" {
-		klog.Warningf("node device path not set, using default: %s", defaultDeviceDir)
-		return defaultDeviceDir
-	}
-	return ctrl.DeviceDir
-}
-
 // pathMode returns the FileMode for a path.
 func pathDeviceType(path string) (deviceType, error) {
 	fi, err := os.Stat(path)
@@ -327,7 +303,7 @@ func attachFileDevice(path string, exec mount.Exec) (string, error) {
 
 	// If no existing loop device for the path, create one
 	if blockDevicePath == "" {
-		klog.V(4).Infof("Creating device for path: %s", path)
+		glog.V(4).Infof("Creating device for path: %s", path)
 		blockDevicePath, err = makeLoopDevice(path, exec)
 		if err != nil {
 			return "", err
@@ -349,17 +325,17 @@ func getLoopDevice(path string, exec mount.Exec) (string, error) {
 	args := []string{"-j", path}
 	out, err := exec.Run(losetupPath, args...)
 	if err != nil {
-		klog.V(2).Infof("Failed device discover command for path %s: %v", path, err)
+		glog.V(2).Infof("Failed device discover command for path %s: %v", path, err)
 		return "", err
 	}
 	return parseLosetupOutputForDevice(out)
 }
 
 func makeLoopDevice(path string, exec mount.Exec) (string, error) {
-	args := []string{"-f", "-P", "--show", path}
+	args := []string{"-f", "--show", path}
 	out, err := exec.Run(losetupPath, args...)
 	if err != nil {
-		klog.V(2).Infof("Failed device create command for path %s: %v", path, err)
+		glog.V(2).Infof("Failed device create command for path %s: %v", path, err)
 		return "", err
 	}
 	return parseLosetupOutputForDevice(out)

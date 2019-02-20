@@ -17,29 +17,26 @@ limitations under the License.
 package certificate
 
 import (
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
 	"net"
-	"sort"
 
 	"github.com/prometheus/client_golang/prometheus"
 
 	certificates "k8s.io/api/certificates/v1beta1"
-	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	clientset "k8s.io/client-go/kubernetes"
-	certificatesclient "k8s.io/client-go/kubernetes/typed/certificates/v1beta1"
+	clientcertificates "k8s.io/client-go/kubernetes/typed/certificates/v1beta1"
 	"k8s.io/client-go/util/certificate"
-	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
+	"k8s.io/kubernetes/pkg/kubelet/apis/kubeletconfig"
 	"k8s.io/kubernetes/pkg/kubelet/metrics"
 )
 
 // NewKubeletServerCertificateManager creates a certificate manager for the kubelet when retrieving a server certificate
 // or returns an error.
-func NewKubeletServerCertificateManager(kubeClient clientset.Interface, kubeCfg *kubeletconfig.KubeletConfiguration, nodeName types.NodeName, getAddresses func() []v1.NodeAddress, certDirectory string) (certificate.Manager, error) {
-	var certSigningRequestClient certificatesclient.CertificateSigningRequestInterface
+func NewKubeletServerCertificateManager(kubeClient clientset.Interface, kubeCfg *kubeletconfig.KubeletConfiguration, nodeName types.NodeName, ips []net.IP, hostnames []string, certDirectory string) (certificate.Manager, error) {
+	var certSigningRequestClient clientcertificates.CertificateSigningRequestInterface
 	if kubeClient != nil && kubeClient.CertificatesV1beta1() != nil {
 		certSigningRequestClient = kubeClient.CertificatesV1beta1().CertificateSigningRequests()
 	}
@@ -62,27 +59,16 @@ func NewKubeletServerCertificateManager(kubeClient clientset.Interface, kubeCfg 
 	)
 	prometheus.MustRegister(certificateExpiration)
 
-	getTemplate := func() *x509.CertificateRequest {
-		hostnames, ips := addressesToHostnamesAndIPs(getAddresses())
-		// don't return a template if we have no addresses to request for
-		if len(hostnames) == 0 && len(ips) == 0 {
-			return nil
-		}
-		return &x509.CertificateRequest{
+	m, err := certificate.NewManager(&certificate.Config{
+		CertificateSigningRequestClient: certSigningRequestClient,
+		Template: &x509.CertificateRequest{
 			Subject: pkix.Name{
 				CommonName:   fmt.Sprintf("system:node:%s", nodeName),
 				Organization: []string{"system:nodes"},
 			},
 			DNSNames:    hostnames,
 			IPAddresses: ips,
-		}
-	}
-
-	m, err := certificate.NewManager(&certificate.Config{
-		ClientFn: func(current *tls.Certificate) (certificatesclient.CertificateSigningRequestInterface, error) {
-			return certSigningRequestClient, nil
 		},
-		GetTemplate: getTemplate,
 		Usages: []certificates.KeyUsage{
 			// https://tools.ietf.org/html/rfc5280#section-4.2.1.3
 			//
@@ -106,57 +92,11 @@ func NewKubeletServerCertificateManager(kubeClient clientset.Interface, kubeCfg 
 	return m, nil
 }
 
-func addressesToHostnamesAndIPs(addresses []v1.NodeAddress) (dnsNames []string, ips []net.IP) {
-	seenDNSNames := map[string]bool{}
-	seenIPs := map[string]bool{}
-	for _, address := range addresses {
-		if len(address.Address) == 0 {
-			continue
-		}
-
-		switch address.Type {
-		case v1.NodeHostName:
-			if ip := net.ParseIP(address.Address); ip != nil {
-				seenIPs[address.Address] = true
-			} else {
-				seenDNSNames[address.Address] = true
-			}
-		case v1.NodeExternalIP, v1.NodeInternalIP:
-			if ip := net.ParseIP(address.Address); ip != nil {
-				seenIPs[address.Address] = true
-			}
-		case v1.NodeExternalDNS, v1.NodeInternalDNS:
-			seenDNSNames[address.Address] = true
-		}
-	}
-
-	for dnsName := range seenDNSNames {
-		dnsNames = append(dnsNames, dnsName)
-	}
-	for ip := range seenIPs {
-		ips = append(ips, net.ParseIP(ip))
-	}
-
-	// return in stable order
-	sort.Strings(dnsNames)
-	sort.Slice(ips, func(i, j int) bool { return ips[i].String() < ips[j].String() })
-
-	return dnsNames, ips
-}
-
 // NewKubeletClientCertificateManager sets up a certificate manager without a
-// client that can be used to sign new certificates (or rotate). If a CSR
-// client is set later, it may begin rotating/renewing the client cert.
-func NewKubeletClientCertificateManager(
-	certDirectory string,
-	nodeName types.NodeName,
-	bootstrapCertData []byte,
-	bootstrapKeyData []byte,
-	certFile string,
-	keyFile string,
-	clientFn certificate.CSRClientFunc,
-) (certificate.Manager, error) {
-
+// client that can be used to sign new certificates (or rotate). It answers with
+// whatever certificate it is initialized with. If a CSR client is set later, it
+// may begin rotating/renewing the client cert
+func NewKubeletClientCertificateManager(certDirectory string, nodeName types.NodeName, certData []byte, keyData []byte, certFile string, keyFile string) (certificate.Manager, error) {
 	certificateStore, err := certificate.NewFileStore(
 		"kubelet-client",
 		certDirectory,
@@ -174,10 +114,9 @@ func NewKubeletClientCertificateManager(
 			Help:      "Gauge of the lifetime of a certificate. The value is the date the certificate will expire in seconds since January 1, 1970 UTC.",
 		},
 	)
-	prometheus.Register(certificateExpiration)
+	prometheus.MustRegister(certificateExpiration)
 
 	m, err := certificate.NewManager(&certificate.Config{
-		ClientFn: clientFn,
 		Template: &x509.CertificateRequest{
 			Subject: pkix.Name{
 				CommonName:   fmt.Sprintf("system:node:%s", nodeName),
@@ -199,16 +138,10 @@ func NewKubeletClientCertificateManager(
 			// authenticate itself to the TLS server.
 			certificates.UsageClientAuth,
 		},
-
-		// For backwards compatibility, the kubelet supports the ability to
-		// provide a higher privileged certificate as initial data that will
-		// then be rotated immediately. This code path is used by kubeadm on
-		// the masters.
-		BootstrapCertificatePEM: bootstrapCertData,
-		BootstrapKeyPEM:         bootstrapKeyData,
-
-		CertificateStore:      certificateStore,
-		CertificateExpiration: certificateExpiration,
+		CertificateStore:        certificateStore,
+		BootstrapCertificatePEM: certData,
+		BootstrapKeyPEM:         keyData,
+		CertificateExpiration:   certificateExpiration,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize client certificate manager: %v", err)

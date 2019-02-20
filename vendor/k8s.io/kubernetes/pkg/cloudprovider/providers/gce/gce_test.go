@@ -17,14 +17,17 @@ limitations under the License.
 package gce
 
 import (
-	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
 	"golang.org/x/oauth2/google"
 
-	cloudprovider "k8s.io/cloud-provider"
+	computealpha "google.golang.org/api/compute/v0.alpha"
+	computebeta "google.golang.org/api/compute/v0.beta"
+	computev1 "google.golang.org/api/compute/v1"
+	"k8s.io/kubernetes/pkg/cloudprovider"
 )
 
 func TestReadConfigFile(t *testing.T) {
@@ -39,7 +42,6 @@ secondary-range-name = my-secondary-range
 node-tags = my-node-tag1
 node-instance-prefix = my-prefix
 multizone = true
-regional = true
    `
 	reader := strings.NewReader(s)
 	config, err := readConfig(reader)
@@ -58,7 +60,6 @@ regional = true
 		NodeTags:           []string{"my-node-tag1"},
 		NodeInstancePrefix: "my-prefix",
 		Multizone:          true,
-		Regional:           true,
 	}}
 
 	if !reflect.DeepEqual(expected, config) {
@@ -91,7 +92,7 @@ func TestGetRegion(t *testing.T) {
 	if regionName != "us-central1" {
 		t.Errorf("Unexpected region from GetGCERegion: %s", regionName)
 	}
-	gce := &Cloud{
+	gce := &GCECloud{
 		localZone: zoneName,
 		region:    regionName,
 	}
@@ -99,7 +100,7 @@ func TestGetRegion(t *testing.T) {
 	if !ok {
 		t.Fatalf("Unexpected missing zones impl")
 	}
-	zone, err := zones.GetZone(context.TODO())
+	zone, err := zones.GetZone()
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
 	}
@@ -170,6 +171,42 @@ func TestComparingHostURLs(t *testing.T) {
 			t.Errorf("expected link1 and link2 to be equal, got %s and %s", link1, link2)
 		} else if !test.expectEqual && link1 == link2 {
 			t.Errorf("expected link1 and link2 not to be equal, got %s and %s", link1, link2)
+		}
+	}
+}
+
+func TestScrubDNS(t *testing.T) {
+	tcs := []struct {
+		nameserversIn  []string
+		searchesIn     []string
+		nameserversOut []string
+		searchesOut    []string
+	}{
+		{
+			nameserversIn:  []string{"1.2.3.4", "5.6.7.8"},
+			nameserversOut: []string{"1.2.3.4", "5.6.7.8"},
+		},
+		{
+			searchesIn:  []string{"c.prj.internal.", "12345678910.google.internal.", "google.internal."},
+			searchesOut: []string{"c.prj.internal.", "google.internal."},
+		},
+		{
+			searchesIn:  []string{"c.prj.internal.", "12345678910.google.internal.", "zone.c.prj.internal.", "google.internal."},
+			searchesOut: []string{"c.prj.internal.", "zone.c.prj.internal.", "google.internal."},
+		},
+		{
+			searchesIn:  []string{"c.prj.internal.", "12345678910.google.internal.", "zone.c.prj.internal.", "google.internal.", "unexpected"},
+			searchesOut: []string{"c.prj.internal.", "zone.c.prj.internal.", "google.internal.", "unexpected"},
+		},
+	}
+	gce := &GCECloud{}
+	for i := range tcs {
+		n, s := gce.ScrubDNS(tcs[i].nameserversIn, tcs[i].searchesIn)
+		if !reflect.DeepEqual(n, tcs[i].nameserversOut) {
+			t.Errorf("Expected %v, got %v", tcs[i].nameserversOut, n)
+		}
+		if !reflect.DeepEqual(s, tcs[i].searchesOut) {
+			t.Errorf("Expected %v, got %v", tcs[i].searchesOut, s)
 		}
 	}
 }
@@ -299,12 +336,12 @@ func TestGetZoneByProviderID(t *testing.T) {
 		},
 	}
 
-	gce := &Cloud{
+	gce := &GCECloud{
 		localZone: "us-central1-f",
 		region:    "us-central1",
 	}
 	for _, test := range tests {
-		zone, err := gce.GetZoneByProviderID(context.TODO(), test.providerID)
+		zone, err := gce.GetZoneByProviderID(test.providerID)
 		if (err != nil) != test.fail {
 			t.Errorf("Expected to fail=%t, provider ID %v, tests %s", test.fail, test, test.description)
 		}
@@ -330,14 +367,13 @@ func TestGenerateCloudConfigs(t *testing.T) {
 		NodeTags:           []string{"node-tag"},
 		NodeInstancePrefix: "node-prefix",
 		Multizone:          false,
-		Regional:           false,
-		APIEndpoint:        "",
+		ApiEndpoint:        "",
 		LocalZone:          "us-central1-a",
 		AlphaFeatures:      []string{},
 	}
 
 	cloudBoilerplate := CloudConfig{
-		APIEndpoint:        "",
+		ApiEndpoint:        "",
 		ProjectID:          "project-id",
 		NetworkProjectID:   "",
 		Region:             "us-central1",
@@ -395,12 +431,12 @@ func TestGenerateCloudConfigs(t *testing.T) {
 			name: "Specified API Endpint",
 			config: func() ConfigGlobal {
 				v := configBoilerplate
-				v.APIEndpoint = "https://www.googleapis.com/compute/staging_v1/"
+				v.ApiEndpoint = "https://www.googleapis.com/compute/staging_v1/"
 				return v
 			},
 			cloud: func() CloudConfig {
 				v := cloudBoilerplate
-				v.APIEndpoint = "https://www.googleapis.com/compute/staging_v1/"
+				v.ApiEndpoint = "https://www.googleapis.com/compute/staging_v1/"
 				return v
 			},
 		},
@@ -450,20 +486,6 @@ func TestGenerateCloudConfigs(t *testing.T) {
 			},
 		},
 		{
-			name: "Regional",
-			config: func() ConfigGlobal {
-				v := configBoilerplate
-				v.Regional = true
-				return v
-			},
-			cloud: func() CloudConfig {
-				v := cloudBoilerplate
-				v.Regional = true
-				v.ManagedZones = nil
-				return v
-			},
-		},
-		{
 			name: "Secondary Range Name",
 			config: func() ConfigGlobal {
 				v := configBoilerplate
@@ -493,40 +515,102 @@ func TestGenerateCloudConfigs(t *testing.T) {
 	}
 }
 
+func TestConvertToV1Operation(t *testing.T) {
+	v1Op := getTestOperation()
+	enc, _ := v1Op.MarshalJSON()
+	var op interface{}
+	var alphaOp computealpha.Operation
+	var betaOp computebeta.Operation
+
+	if err := json.Unmarshal(enc, &alphaOp); err != nil {
+		t.Errorf("Failed to unmarshal operation: %v", err)
+	}
+
+	if err := json.Unmarshal(enc, &betaOp); err != nil {
+		t.Errorf("Failed to unmarshal operation: %v", err)
+	}
+
+	op = convertToV1Operation(&alphaOp)
+	if _, ok := op.(*computev1.Operation); ok {
+		if !reflect.DeepEqual(op, v1Op) {
+			t.Errorf("Failed to maintain consistency across conversion")
+		}
+	} else {
+		t.Errorf("Expect output to be type v1 operation, but got %v", op)
+	}
+
+	op = convertToV1Operation(&betaOp)
+	if _, ok := op.(*computev1.Operation); ok {
+		if !reflect.DeepEqual(op, v1Op) {
+			t.Errorf("Failed to maintain consistency across conversion")
+		}
+	} else {
+		t.Errorf("Expect output to be type v1 operation, but got %v", op)
+	}
+}
+
+func getTestOperation() *computev1.Operation {
+	return &computev1.Operation{
+		Name:        "test",
+		Description: "test",
+		Id:          uint64(12345),
+		Error: &computev1.OperationError{
+			Errors: []*computev1.OperationErrorErrors{
+				{
+					Code:    "555",
+					Message: "error",
+				},
+			},
+		},
+	}
+}
+
 func TestNewAlphaFeatureGate(t *testing.T) {
+	knownAlphaFeatures["foo"] = true
+	knownAlphaFeatures["bar"] = true
+
 	testCases := []struct {
 		alphaFeatures  []string
 		expectEnabled  []string
 		expectDisabled []string
+		expectError    bool
 	}{
 		// enable foo bar
 		{
 			alphaFeatures:  []string{"foo", "bar"},
 			expectEnabled:  []string{"foo", "bar"},
 			expectDisabled: []string{"aaa"},
+			expectError:    false,
 		},
 		// no alpha feature
 		{
 			alphaFeatures:  []string{},
 			expectEnabled:  []string{},
 			expectDisabled: []string{"foo", "bar"},
+			expectError:    false,
 		},
 		// unsupported alpha feature
 		{
 			alphaFeatures:  []string{"aaa", "foo"},
+			expectError:    true,
 			expectEnabled:  []string{"foo"},
-			expectDisabled: []string{},
+			expectDisabled: []string{"aaa"},
 		},
 		// enable foo
 		{
 			alphaFeatures:  []string{"foo"},
 			expectEnabled:  []string{"foo"},
 			expectDisabled: []string{"bar"},
+			expectError:    false,
 		},
 	}
 
 	for _, tc := range testCases {
-		featureGate := NewAlphaFeatureGate(tc.alphaFeatures)
+		featureGate, err := NewAlphaFeatureGate(tc.alphaFeatures)
+
+		if (tc.expectError && err == nil) || (!tc.expectError && err != nil) {
+			t.Errorf("Expect error to be %v, but got error %v", tc.expectError, err)
+		}
 
 		for _, key := range tc.expectEnabled {
 			if !featureGate.Enabled(key) {
@@ -539,6 +623,8 @@ func TestNewAlphaFeatureGate(t *testing.T) {
 			}
 		}
 	}
+	delete(knownAlphaFeatures, "foo")
+	delete(knownAlphaFeatures, "bar")
 }
 
 func TestGetRegionInURL(t *testing.T) {
@@ -546,9 +632,9 @@ func TestGetRegionInURL(t *testing.T) {
 		"https://www.googleapis.com/compute/v1/projects/my-project/regions/us-central1/subnetworks/a": "us-central1",
 		"https://www.googleapis.com/compute/v1/projects/my-project/regions/us-west2/subnetworks/b":    "us-west2",
 		"projects/my-project/regions/asia-central1/subnetworks/c":                                     "asia-central1",
-		"regions/europe-north2": "europe-north2",
-		"my-url":                "",
-		"":                      "",
+		"regions/europe-north2":                                                                       "europe-north2",
+		"my-url":                                                                                      "",
+		"":                                                                                            "",
 	}
 	for input, output := range cases {
 		result := getRegionInURL(input)

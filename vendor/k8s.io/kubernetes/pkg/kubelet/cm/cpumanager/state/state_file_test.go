@@ -18,6 +18,7 @@ package state
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -34,8 +35,7 @@ func writeToStateFile(statefile string, content string) {
 	ioutil.WriteFile(statefile, []byte(content), 0644)
 }
 
-// AssertStateEqual marks provided test as failed if provided states differ
-func AssertStateEqual(t *testing.T, sf State, sm State) {
+func stateEqual(t *testing.T, sf State, sm State) {
 	cpusetSf := sf.GetDefaultCPUSet()
 	cpusetSm := sm.GetDefaultCPUSet()
 	if !cpusetSf.Equals(cpusetSm) {
@@ -45,7 +45,7 @@ func AssertStateEqual(t *testing.T, sf State, sm State) {
 	cpuassignmentSf := sf.GetCPUAssignments()
 	cpuassignmentSm := sm.GetCPUAssignments()
 	if !reflect.DeepEqual(cpuassignmentSf, cpuassignmentSm) {
-		t.Errorf("State CPU assignments mismatch. Have %s, want %s", cpuassignmentSf, cpuassignmentSm)
+		t.Errorf("State CPU assigments mismatch. Have %s, want %s", cpuassignmentSf, cpuassignmentSm)
 	}
 }
 
@@ -69,36 +69,41 @@ func stderrCapture(t *testing.T, f func() State) (bytes.Buffer, State) {
 }
 
 func TestFileStateTryRestore(t *testing.T) {
+	flag.Set("alsologtostderr", "true")
+	flag.Parse()
+
 	testCases := []struct {
 		description      string
 		stateFileContent string
 		policyName       string
 		expErr           string
-		expPanic         bool
 		expectedState    *stateMemory
 	}{
 		{
-			"Invalid JSON - one byte file",
+			"Invalid JSON - empty file",
 			"\n",
 			"none",
-			"[cpumanager] state file: unable to restore state from disk (unexpected end of JSON input)",
-			true,
-			&stateMemory{},
+			"state file: could not unmarshal, corrupted state file",
+			&stateMemory{
+				assignments:   ContainerCPUAssignments{},
+				defaultCPUSet: cpuset.NewCPUSet(),
+			},
 		},
 		{
 			"Invalid JSON - invalid content",
 			"{",
 			"none",
-			"[cpumanager] state file: unable to restore state from disk (unexpected end of JSON input)",
-			true,
-			&stateMemory{},
+			"state file: could not unmarshal, corrupted state file",
+			&stateMemory{
+				assignments:   ContainerCPUAssignments{},
+				defaultCPUSet: cpuset.NewCPUSet(),
+			},
 		},
 		{
 			"Try restore defaultCPUSet only",
 			`{"policyName": "none", "defaultCpuSet": "4-6"}`,
 			"none",
 			"",
-			false,
 			&stateMemory{
 				assignments:   ContainerCPUAssignments{},
 				defaultCPUSet: cpuset.NewCPUSet(4, 5, 6),
@@ -108,9 +113,11 @@ func TestFileStateTryRestore(t *testing.T) {
 			"Try restore defaultCPUSet only - invalid name",
 			`{"policyName": "none", "defaultCpuSet" "4-6"}`,
 			"none",
-			`[cpumanager] state file: unable to restore state from disk (invalid character '"' after object key)`,
-			true,
-			&stateMemory{},
+			"",
+			&stateMemory{
+				assignments:   ContainerCPUAssignments{},
+				defaultCPUSet: cpuset.NewCPUSet(),
+			},
 		},
 		{
 			"Try restore assignments only",
@@ -123,7 +130,6 @@ func TestFileStateTryRestore(t *testing.T) {
 			}`,
 			"none",
 			"",
-			false,
 			&stateMemory{
 				assignments: ContainerCPUAssignments{
 					"container1": cpuset.NewCPUSet(4, 5, 6),
@@ -140,17 +146,21 @@ func TestFileStateTryRestore(t *testing.T) {
 				"entries": {}
 			}`,
 			"B",
-			`[cpumanager] state file: unable to restore state from disk (policy configured "B" != policy from state file "A")`,
-			true,
-			&stateMemory{},
+			"policy configured \"B\" != policy from state file \"A\"",
+			&stateMemory{
+				assignments:   ContainerCPUAssignments{},
+				defaultCPUSet: cpuset.NewCPUSet(),
+			},
 		},
 		{
 			"Try restore invalid assignments",
 			`{"entries": }`,
 			"none",
-			"[cpumanager] state file: unable to restore state from disk (invalid character '}' looking for beginning of value)",
-			true,
-			&stateMemory{},
+			"state file: could not unmarshal, corrupted state file",
+			&stateMemory{
+				assignments:   ContainerCPUAssignments{},
+				defaultCPUSet: cpuset.NewCPUSet(),
+			},
 		},
 		{
 			"Try restore valid file",
@@ -164,7 +174,6 @@ func TestFileStateTryRestore(t *testing.T) {
 			}`,
 			"none",
 			"",
-			false,
 			&stateMemory{
 				assignments: ContainerCPUAssignments{
 					"container1": cpuset.NewCPUSet(4, 5, 6),
@@ -180,9 +189,11 @@ func TestFileStateTryRestore(t *testing.T) {
 				"defaultCpuSet": "2-sd"
 			}`,
 			"none",
-			`[cpumanager] state file: unable to restore state from disk (strconv.Atoi: parsing "sd": invalid syntax)`,
-			true,
-			&stateMemory{},
+			"state file: could not parse state file",
+			&stateMemory{
+				assignments:   ContainerCPUAssignments{},
+				defaultCPUSet: cpuset.NewCPUSet(),
+			},
 		},
 		{
 			"Try restore un-parsable assignments",
@@ -195,16 +206,17 @@ func TestFileStateTryRestore(t *testing.T) {
 				}
 			}`,
 			"none",
-			`[cpumanager] state file: unable to restore state from disk (strconv.Atoi: parsing "p": invalid syntax)`,
-			true,
-			&stateMemory{},
+			"state file: could not parse state file",
+			&stateMemory{
+				assignments:   ContainerCPUAssignments{},
+				defaultCPUSet: cpuset.NewCPUSet(),
+			},
 		},
 		{
-			"tryRestoreState creates empty state file",
+			"TryRestoreState creates empty state file",
 			"",
 			"none",
 			"",
-			false,
 			&stateMemory{
 				assignments:   ContainerCPUAssignments{},
 				defaultCPUSet: cpuset.NewCPUSet(),
@@ -214,23 +226,11 @@ func TestFileStateTryRestore(t *testing.T) {
 
 	for idx, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
-			defer func() {
-				if tc.expPanic {
-					r := recover()
-					panicMsg := r.(string)
-					if !strings.HasPrefix(panicMsg, tc.expErr) {
-						t.Fatalf(`expected panic "%s" but got "%s"`, tc.expErr, panicMsg)
-					} else {
-						t.Logf(`got expected panic "%s"`, panicMsg)
-					}
-				}
-			}()
-
 			sfilePath, err := ioutil.TempFile("/tmp", fmt.Sprintf("cpumanager_state_file_test_%d", idx))
 			if err != nil {
 				t.Errorf("cannot create temporary file: %q", err.Error())
 			}
-			// Don't create state file, let tryRestoreState figure out that is should create
+			// Don't create state file, let TryRestoreState figure out that is should create
 			if tc.stateFileContent != "" {
 				writeToStateFile(sfilePath.Name(), tc.stateFileContent)
 			}
@@ -245,16 +245,16 @@ func TestFileStateTryRestore(t *testing.T) {
 			if tc.expErr != "" {
 				if logData.String() != "" {
 					if !strings.Contains(logData.String(), tc.expErr) {
-						t.Errorf("tryRestoreState() error = %v, wantErr %v", logData.String(), tc.expErr)
+						t.Errorf("TryRestoreState() error = %v, wantErr %v", logData.String(), tc.expErr)
 						return
 					}
 				} else {
-					t.Errorf("tryRestoreState() error = nil, wantErr %v", tc.expErr)
+					t.Errorf("TryRestoreState() error = nil, wantErr %v", tc.expErr)
 					return
 				}
 			}
 
-			AssertStateEqual(t, fileState, tc.expectedState)
+			stateEqual(t, fileState, tc.expectedState)
 		})
 	}
 }
@@ -268,7 +268,7 @@ func TestFileStateTryRestorePanic(t *testing.T) {
 	}{
 		"Panic creating file",
 		true,
-		"[cpumanager] state file not written",
+		"[cpumanager] state file not created",
 	}
 
 	t.Run(testCase.description, func(t *testing.T) {
@@ -277,10 +277,10 @@ func TestFileStateTryRestorePanic(t *testing.T) {
 			if err := recover(); err != nil {
 				if testCase.wantPanic {
 					if testCase.panicMessage == err {
-						t.Logf("tryRestoreState() got expected panic = %v", err)
+						t.Logf("TryRestoreState() got expected panic = %v", err)
 						return
 					}
-					t.Errorf("tryRestoreState() unexpected panic = %v, wantErr %v", err, testCase.panicMessage)
+					t.Errorf("TryRestoreState() unexpected panic = %v, wantErr %v", err, testCase.panicMessage)
 				}
 			}
 		}()
@@ -289,6 +289,9 @@ func TestFileStateTryRestorePanic(t *testing.T) {
 }
 
 func TestUpdateStateFile(t *testing.T) {
+	flag.Set("alsologtostderr", "true")
+	flag.Parse()
+
 	testCases := []struct {
 		description   string
 		expErr        string
@@ -364,7 +367,7 @@ func TestUpdateStateFile(t *testing.T) {
 				}
 			}
 			newFileState := NewFileState(sfilePath.Name(), "static")
-			AssertStateEqual(t, newFileState, tc.expectedState)
+			stateEqual(t, newFileState, tc.expectedState)
 		})
 	}
 }
@@ -420,7 +423,7 @@ func TestHelpersStateFile(t *testing.T) {
 			for containerName, containerCPUs := range tc.containers {
 				state.SetCPUSet(containerName, containerCPUs)
 				if cpus, _ := state.GetCPUSet(containerName); !cpus.Equals(containerCPUs) {
-					t.Errorf("state is inconsistent. Wants = %q Have = %q", containerCPUs, cpus)
+					t.Errorf("state is inconsistant. Wants = %q Have = %q", containerCPUs, cpus)
 				}
 				state.Delete(containerName)
 				if cpus := state.GetCPUSetOrDefault(containerName); !cpus.Equals(tc.defaultCPUset) {
@@ -472,6 +475,7 @@ func TestClearStateStateFile(t *testing.T) {
 					t.Error("cleared state shoudn't has got information about containers")
 				}
 			}
+
 		})
 	}
 }

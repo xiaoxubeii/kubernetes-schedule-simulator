@@ -26,13 +26,13 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
+	"k8s.io/kubernetes/pkg/volume/util/volumehelper"
 )
 
 // ActualStateOfWorld defines a set of thread-safe operations supported on
@@ -73,7 +73,7 @@ type ActualStateOfWorld interface {
 	// SetNodeStatusUpdateNeeded sets statusUpdateNeeded for the specified
 	// node to true indicating the AttachedVolume field in the Node's Status
 	// object needs to be updated by the node updater again.
-	// If the specified node does not exist in the nodesToUpdateStatusFor list,
+	// If the specifed node does not exist in the nodesToUpdateStatusFor list,
 	// log the error and return
 	SetNodeStatusUpdateNeeded(nodeName types.NodeName)
 
@@ -131,8 +131,8 @@ type ActualStateOfWorld interface {
 type AttachedVolume struct {
 	operationexecutor.AttachedVolume
 
-	// MountedByNode indicates that this volume has been mounted by the node and
-	// is unsafe to detach.
+	// MountedByNode indicates that this volume has been been mounted by the
+	// node and is unsafe to detach.
 	// The value is set and unset by SetVolumeMountedByNode(...).
 	MountedByNode bool
 
@@ -275,7 +275,7 @@ func (asw *actualStateOfWorld) AddVolumeNode(
 				err)
 		}
 
-		volumeName, err = util.GetUniqueVolumeNameFromSpec(
+		volumeName, err = volumehelper.GetUniqueVolumeNameFromSpec(
 			attachableVolumePlugin, volumeSpec)
 		if err != nil {
 			return "", fmt.Errorf(
@@ -304,7 +304,7 @@ func (asw *actualStateOfWorld) AddVolumeNode(
 		// Update the fields for volume object except the nodes attached to the volumes.
 		volumeObj.devicePath = devicePath
 		volumeObj.spec = volumeSpec
-		klog.V(2).Infof("Volume %q is already added to attachedVolume list to node %q, update device path %q",
+		glog.V(2).Infof("Volume %q is already added to attachedVolume list to node %q, update device path %q",
 			volumeName,
 			nodeName,
 			devicePath)
@@ -321,7 +321,7 @@ func (asw *actualStateOfWorld) AddVolumeNode(
 			detachRequestedTime:   time.Time{},
 		}
 	} else {
-		klog.V(5).Infof("Volume %q is already added to attachedVolume list to the node %q",
+		glog.V(5).Infof("Volume %q is already added to attachedVolume list to the node %q",
 			volumeName,
 			nodeName)
 	}
@@ -347,7 +347,7 @@ func (asw *actualStateOfWorld) SetVolumeMountedByNode(
 
 	nodeObj.mountedByNode = mounted
 	volumeObj.nodesAttachedTo[nodeName] = nodeObj
-	klog.V(4).Infof("SetVolumeMountedByNode volume %v to the node %q mounted %t",
+	glog.V(4).Infof("SetVolumeMountedByNode volume %v to the node %q mounted %t",
 		volumeName,
 		nodeName,
 		mounted)
@@ -361,7 +361,7 @@ func (asw *actualStateOfWorld) ResetDetachRequestTime(
 
 	volumeObj, nodeObj, err := asw.getNodeAndVolume(volumeName, nodeName)
 	if err != nil {
-		klog.Errorf("Failed to ResetDetachRequestTime with error: %v", err)
+		glog.Errorf("Failed to ResetDetachRequestTime with error: %v", err)
 		return
 	}
 	nodeObj.detachRequestedTime = time.Time{}
@@ -381,7 +381,7 @@ func (asw *actualStateOfWorld) SetDetachRequestTime(
 	if nodeObj.detachRequestedTime.IsZero() {
 		nodeObj.detachRequestedTime = time.Now()
 		volumeObj.nodesAttachedTo[nodeName] = nodeObj
-		klog.V(4).Infof("Set detach request time to current time for volume %v on node %q",
+		glog.V(4).Infof("Set detach request time to current time for volume %v on node %q",
 			volumeName,
 			nodeName)
 	}
@@ -441,7 +441,7 @@ func (asw *actualStateOfWorld) addVolumeToReportAsAttached(
 	volumeName v1.UniqueVolumeName, nodeName types.NodeName) {
 	// In case the volume/node entry is no longer in attachedVolume list, skip the rest
 	if _, _, err := asw.getNodeAndVolume(volumeName, nodeName); err != nil {
-		klog.V(4).Infof("Volume %q is no longer attached to node %q", volumeName, nodeName)
+		glog.V(4).Infof("Volume %q is no longer attached to node %q", volumeName, nodeName)
 		return
 	}
 	nodeToUpdate, nodeToUpdateExists := asw.nodesToUpdateStatusFor[nodeName]
@@ -453,7 +453,7 @@ func (asw *actualStateOfWorld) addVolumeToReportAsAttached(
 			volumesToReportAsAttached: make(map[v1.UniqueVolumeName]v1.UniqueVolumeName),
 		}
 		asw.nodesToUpdateStatusFor[nodeName] = nodeToUpdate
-		klog.V(4).Infof("Add new node %q to nodesToUpdateStatusFor", nodeName)
+		glog.V(4).Infof("Add new node %q to nodesToUpdateStatusFor", nodeName)
 	}
 	_, nodeToUpdateVolumeExists :=
 		nodeToUpdate.volumesToReportAsAttached[volumeName]
@@ -461,19 +461,19 @@ func (asw *actualStateOfWorld) addVolumeToReportAsAttached(
 		nodeToUpdate.statusUpdateNeeded = true
 		nodeToUpdate.volumesToReportAsAttached[volumeName] = volumeName
 		asw.nodesToUpdateStatusFor[nodeName] = nodeToUpdate
-		klog.V(4).Infof("Report volume %q as attached to node %q", volumeName, nodeName)
+		glog.V(4).Infof("Report volume %q as attached to node %q", volumeName, nodeName)
 	}
 }
 
 // Update the flag statusUpdateNeeded to indicate whether node status is already updated or
 // needs to be updated again by the node status updater.
-// If the specified node does not exist in the nodesToUpdateStatusFor list, log the error and return
+// If the specifed node does not exist in the nodesToUpdateStatusFor list, log the error and return
 // This is an internal function and caller should acquire and release the lock
 func (asw *actualStateOfWorld) updateNodeStatusUpdateNeeded(nodeName types.NodeName, needed bool) error {
 	nodeToUpdate, nodeToUpdateExists := asw.nodesToUpdateStatusFor[nodeName]
 	if !nodeToUpdateExists {
 		// should not happen
-		errMsg := fmt.Sprintf("Failed to set statusUpdateNeeded to needed %t, because nodeName=%q does not exist",
+		errMsg := fmt.Sprintf("Failed to set statusUpdateNeeded to needed %t because nodeName=%q  does not exist",
 			needed, nodeName)
 		return fmt.Errorf(errMsg)
 	}
@@ -488,7 +488,7 @@ func (asw *actualStateOfWorld) SetNodeStatusUpdateNeeded(nodeName types.NodeName
 	asw.Lock()
 	defer asw.Unlock()
 	if err := asw.updateNodeStatusUpdateNeeded(nodeName, true); err != nil {
-		klog.Warningf("Failed to update statusUpdateNeeded field in actual state of world: %v", err)
+		glog.Errorf("Failed to update statusUpdateNeeded field in actual state of world: %v", err)
 	}
 }
 
@@ -559,7 +559,6 @@ func (asw *actualStateOfWorld) GetAttachedVolumesForNode(
 				attachedVolumes = append(
 					attachedVolumes,
 					getAttachedVolume(&volumeObj, &nodeObj))
-				break
 			}
 		}
 	}
@@ -623,7 +622,7 @@ func (asw *actualStateOfWorld) GetVolumesToReportAttached() map[types.NodeName][
 		// of this node will be updated, so set the flag statusUpdateNeeded to false indicating
 		// the current status is already updated.
 		if err := asw.updateNodeStatusUpdateNeeded(nodeName, false); err != nil {
-			klog.Errorf("Failed to update statusUpdateNeeded field when getting volumes: %v", err)
+			glog.Errorf("Failed to update statusUpdateNeeded field when getting volumes: %v", err)
 		}
 	}
 

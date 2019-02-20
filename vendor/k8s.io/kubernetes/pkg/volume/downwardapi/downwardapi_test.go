@@ -31,7 +31,7 @@ import (
 	utiltesting "k8s.io/client-go/util/testing"
 	"k8s.io/kubernetes/pkg/fieldpath"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/emptydir"
+	"k8s.io/kubernetes/pkg/volume/empty_dir"
 	volumetest "k8s.io/kubernetes/pkg/volume/testing"
 )
 
@@ -47,7 +47,7 @@ func newTestHost(t *testing.T, clientset clientset.Interface) (string, volume.Vo
 	if err != nil {
 		t.Fatalf("can't make a temp rootdir: %v", err)
 	}
-	return tempDir, volumetest.NewFakeVolumeHost(tempDir, clientset, emptydir.ProbeVolumePlugins())
+	return tempDir, volumetest.NewFakeVolumeHost(tempDir, clientset, empty_dir.ProbeVolumePlugins())
 }
 
 func TestCanSupport(t *testing.T) {
@@ -82,9 +82,8 @@ func TestDownwardAPI(t *testing.T) {
 		"key3": "value3",
 	}
 	annotations := map[string]string{
-		"a1":        "value1",
-		"a2":        "value2",
-		"multiline": "c\nb\na",
+		"a1": "value1",
+		"a2": "value2",
 	}
 	testCases := []struct {
 		name           string
@@ -319,8 +318,8 @@ func doVerifyLinesInFile(t *testing.T, volumePath, filename string, expected str
 		t.Errorf(err.Error())
 		return
 	}
-	actualStr := string(data)
-	expectedStr := expected
+	actualStr := sortLines(string(data))
+	expectedStr := sortLines(expected)
 	if actualStr != expectedStr {
 		t.Errorf("Found `%s`, expected `%s`", actualStr, expectedStr)
 	}

@@ -7,8 +7,12 @@ load(
 
 go_library(
     name = "go_default_library",
-    srcs = ["consistentread.go"],
+    srcs = [
+        "consistentread.go",
+        "writer.go",
+    ],
     importpath = "k8s.io/kubernetes/pkg/util/io",
+    deps = ["//vendor/github.com/golang/glog:go_default_library"],
 )
 
 filegroup(

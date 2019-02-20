@@ -21,15 +21,15 @@ import (
 	"strings"
 	"sync"
 
-	"k8s.io/klog"
+	"github.com/golang/glog"
 
 	utilexec "k8s.io/utils/exec"
 )
 
 // Interface is an injectable interface for running ipconfig commands.  Implementations must be goroutine-safe.
 type Interface interface {
-	// GetDNSSuffixSearchList returns the list of DNS suffix to search
-	GetDNSSuffixSearchList() ([]string, error)
+	// GetDnsSuffixSearchList returns the list of DNS suffix to search
+	GetDnsSuffixSearchList() ([]string, error)
 }
 
 const (
@@ -54,8 +54,8 @@ func New(exec utilexec.Interface) Interface {
 	return runner
 }
 
-// GetDNSSuffixSearchList returns the list of DNS suffix to search
-func (runner *runner) GetDNSSuffixSearchList() ([]string, error) {
+// GetDnsSuffixSearchList returns the list of DNS suffix to search
+func (runner *runner) GetDnsSuffixSearchList() ([]string, error) {
 	// Parse the DNS suffix search list from ipconfig output
 	// ipconfig /all on Windows displays the entry of DNS suffix search list
 	// An example output contains:
@@ -66,7 +66,7 @@ func (runner *runner) GetDNSSuffixSearchList() ([]string, error) {
 	// TODO: this does not work when the label is localized
 	suffixList := []string{}
 	if runtime.GOOS != "windows" {
-		klog.V(1).Infof("ipconfig not supported on GOOS=%s", runtime.GOOS)
+		glog.V(1).Infof("ipconfig not supported on GOOS=%s", runtime.GOOS)
 		return suffixList, nil
 	}
 
@@ -92,7 +92,7 @@ func (runner *runner) GetDNSSuffixSearchList() ([]string, error) {
 			}
 		}
 	} else {
-		klog.V(1).Infof("Running %s %s failed: %v", cmdIpconfig, cmdDefaultArgs, err)
+		glog.V(1).Infof("Running %s %s failed: %v", cmdIpconfig, cmdDefaultArgs, err)
 	}
 
 	return suffixList, err

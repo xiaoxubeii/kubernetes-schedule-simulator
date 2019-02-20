@@ -20,65 +20,65 @@ import (
 	"reflect"
 	"testing"
 
-	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/kubernetes/pkg/apis/rbac"
 )
 
 type escalationTest struct {
-	ownerRules   []rbacv1.PolicyRule
-	servantRules []rbacv1.PolicyRule
+	ownerRules   []rbac.PolicyRule
+	servantRules []rbac.PolicyRule
 
 	expectedCovered        bool
-	expectedUncoveredRules []rbacv1.PolicyRule
+	expectedUncoveredRules []rbac.PolicyRule
 }
 
 func TestCoversExactMatch(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"builds"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"builds"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversSubresourceWildcard(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"*/scale"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"foo/scale"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversMultipleRulesCoveringSingleRule(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"delete"}, Resources: []string{"deployments"}},
 			{APIGroups: []string{"v1"}, Verbs: []string{"delete"}, Resources: []string{"builds"}},
 			{APIGroups: []string{"v1"}, Verbs: []string{"update"}, Resources: []string{"builds", "deployments"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"delete", "update"}, Resources: []string{"builds", "deployments"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 
 }
 
 func TestCoversMultipleAPIGroupsCoveringSingleRule(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"group1"}, Verbs: []string{"delete"}, Resources: []string{"deployments"}},
 			{APIGroups: []string{"group1"}, Verbs: []string{"delete"}, Resources: []string{"builds"}},
 			{APIGroups: []string{"group1"}, Verbs: []string{"update"}, Resources: []string{"builds", "deployments"}},
@@ -86,22 +86,22 @@ func TestCoversMultipleAPIGroupsCoveringSingleRule(t *testing.T) {
 			{APIGroups: []string{"group2"}, Verbs: []string{"delete"}, Resources: []string{"builds"}},
 			{APIGroups: []string{"group2"}, Verbs: []string{"update"}, Resources: []string{"builds", "deployments"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"group1", "group2"}, Verbs: []string{"delete", "update"}, Resources: []string{"builds", "deployments"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 
 }
 
 func TestCoversSingleAPIGroupsCoveringMultiple(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"group1", "group2"}, Verbs: []string{"delete", "update"}, Resources: []string{"builds", "deployments"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"group1"}, Verbs: []string{"delete"}, Resources: []string{"deployments"}},
 			{APIGroups: []string{"group1"}, Verbs: []string{"delete"}, Resources: []string{"builds"}},
 			{APIGroups: []string{"group1"}, Verbs: []string{"update"}, Resources: []string{"builds", "deployments"}},
@@ -111,23 +111,23 @@ func TestCoversSingleAPIGroupsCoveringMultiple(t *testing.T) {
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 
 }
 
 func TestCoversMultipleRulesMissingSingleVerbResourceCombination(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"delete", "update"}, Resources: []string{"builds", "deployments"}},
 			{APIGroups: []string{"v1"}, Verbs: []string{"delete"}, Resources: []string{"pods"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"delete", "update"}, Resources: []string{"builds", "deployments", "pods"}},
 		},
 
 		expectedCovered: false,
-		expectedUncoveredRules: []rbacv1.PolicyRule{
+		expectedUncoveredRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"update"}, Resources: []string{"pods"}},
 		},
 	}.test(t)
@@ -135,29 +135,29 @@ func TestCoversMultipleRulesMissingSingleVerbResourceCombination(t *testing.T) {
 
 func TestCoversAPIGroupStarCoveringMultiple(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"*"}, Verbs: []string{"get"}, Resources: []string{"roles"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"group1", "group2"}, Verbs: []string{"get"}, Resources: []string{"roles"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversEnumerationNotCoveringAPIGroupStar(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"dummy-group"}, Verbs: []string{"get"}, Resources: []string{"roles"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"*"}, Verbs: []string{"get"}, Resources: []string{"roles"}},
 		},
 
 		expectedCovered: false,
-		expectedUncoveredRules: []rbacv1.PolicyRule{
+		expectedUncoveredRules: []rbac.PolicyRule{
 			{APIGroups: []string{"*"}, Verbs: []string{"get"}, Resources: []string{"roles"}},
 		},
 	}.test(t)
@@ -165,43 +165,43 @@ func TestCoversEnumerationNotCoveringAPIGroupStar(t *testing.T) {
 
 func TestCoversAPIGroupStarCoveringStar(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"*"}, Verbs: []string{"get"}, Resources: []string{"roles"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"*"}, Verbs: []string{"get"}, Resources: []string{"roles"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversVerbStarCoveringMultiple(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"*"}, Resources: []string{"roles"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"watch", "list"}, Resources: []string{"roles"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversEnumerationNotCoveringVerbStar(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete", "exec"}, Resources: []string{"roles"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"*"}, Resources: []string{"roles"}},
 		},
 
 		expectedCovered: false,
-		expectedUncoveredRules: []rbacv1.PolicyRule{
+		expectedUncoveredRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"*"}, Resources: []string{"roles"}},
 		},
 	}.test(t)
@@ -209,43 +209,43 @@ func TestCoversEnumerationNotCoveringVerbStar(t *testing.T) {
 
 func TestCoversVerbStarCoveringStar(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"*"}, Resources: []string{"roles"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"*"}, Resources: []string{"roles"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversResourceStarCoveringMultiple(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"*"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"resourcegroup:deployments"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversEnumerationNotCoveringResourceStar(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"roles", "resourcegroup:deployments"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"*"}},
 		},
 
 		expectedCovered: false,
-		expectedUncoveredRules: []rbacv1.PolicyRule{
+		expectedUncoveredRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"*"}},
 		},
 	}.test(t)
@@ -253,43 +253,43 @@ func TestCoversEnumerationNotCoveringResourceStar(t *testing.T) {
 
 func TestCoversResourceStarCoveringStar(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"*"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"*"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversResourceNameEmptyCoveringMultiple(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"pods"}, ResourceNames: []string{}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"pods"}, ResourceNames: []string{"foo", "bar"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversEnumerationNotCoveringResourceNameEmpty(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"pods"}, ResourceNames: []string{"foo", "bar"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"pods"}, ResourceNames: []string{}},
 		},
 
 		expectedCovered: false,
-		expectedUncoveredRules: []rbacv1.PolicyRule{
+		expectedUncoveredRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"pods"}},
 		},
 	}.test(t)
@@ -297,43 +297,43 @@ func TestCoversEnumerationNotCoveringResourceNameEmpty(t *testing.T) {
 
 func TestCoversNonResourceURLs(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis"}, Verbs: []string{"*"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis"}, Verbs: []string{"*"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversNonResourceURLsStar(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"*"}, Verbs: []string{"*"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis", "/apis/v1", "/"}, Verbs: []string{"*"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversNonResourceURLsStarAfterPrefixDoesntCover(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis/*"}, Verbs: []string{"*"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis", "/apis/v1"}, Verbs: []string{"get"}},
 		},
 
 		expectedCovered: false,
-		expectedUncoveredRules: []rbacv1.PolicyRule{
+		expectedUncoveredRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis"}, Verbs: []string{"get"}},
 		},
 	}.test(t)
@@ -341,43 +341,43 @@ func TestCoversNonResourceURLsStarAfterPrefixDoesntCover(t *testing.T) {
 
 func TestCoversNonResourceURLsStarAfterPrefix(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis/*"}, Verbs: []string{"*"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{NonResourceURLs: []string{"/apis/v1/foo", "/apis/v1"}, Verbs: []string{"get"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversNonResourceURLsWithOtherFields(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"builds"}, NonResourceURLs: []string{"/apis"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"builds"}, NonResourceURLs: []string{"/apis"}},
 		},
 
 		expectedCovered:        true,
-		expectedUncoveredRules: []rbacv1.PolicyRule{},
+		expectedUncoveredRules: []rbac.PolicyRule{},
 	}.test(t)
 }
 
 func TestCoversNonResourceURLsWithOtherFieldsFailure(t *testing.T) {
 	escalationTest{
-		ownerRules: []rbacv1.PolicyRule{
+		ownerRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"builds"}},
 		},
-		servantRules: []rbacv1.PolicyRule{
+		servantRules: []rbac.PolicyRule{
 			{APIGroups: []string{"v1"}, Verbs: []string{"get"}, Resources: []string{"builds"}, NonResourceURLs: []string{"/apis"}},
 		},
 
 		expectedCovered:        false,
-		expectedUncoveredRules: []rbacv1.PolicyRule{{NonResourceURLs: []string{"/apis"}, Verbs: []string{"get"}}},
+		expectedUncoveredRules: []rbac.PolicyRule{{NonResourceURLs: []string{"/apis"}, Verbs: []string{"get"}}},
 	}.test(t)
 }
 
@@ -393,7 +393,7 @@ func (test escalationTest) test(t *testing.T) {
 	}
 }
 
-func rulesMatch(expectedRules, actualRules []rbacv1.PolicyRule) bool {
+func rulesMatch(expectedRules, actualRules []rbac.PolicyRule) bool {
 	if len(expectedRules) != len(actualRules) {
 		return false
 	}

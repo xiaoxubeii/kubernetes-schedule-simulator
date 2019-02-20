@@ -19,23 +19,23 @@ package reconciliation
 import (
 	"testing"
 
-	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/kubernetes/pkg/apis/core/helper"
+	"k8s.io/kubernetes/pkg/apis/rbac"
 )
 
-func role(rules []rbacv1.PolicyRule, labels map[string]string, annotations map[string]string) *rbacv1.ClusterRole {
-	return &rbacv1.ClusterRole{
+func role(rules []rbac.PolicyRule, labels map[string]string, annotations map[string]string) *rbac.ClusterRole {
+	return &rbac.ClusterRole{
 		Rules:      rules,
 		ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 	}
 }
 
-func rules(resources ...string) []rbacv1.PolicyRule {
-	r := []rbacv1.PolicyRule{}
+func rules(resources ...string) []rbac.PolicyRule {
+	r := []rbac.PolicyRule{}
 	for _, resource := range resources {
-		r = append(r, rbacv1.PolicyRule{APIGroups: []string{""}, Verbs: []string{"get"}, Resources: []string{resource}})
+		r = append(r, rbac.PolicyRule{APIGroups: []string{""}, Verbs: []string{"get"}, Resources: []string{resource}})
 	}
 	return r
 }
@@ -44,11 +44,11 @@ type ss map[string]string
 
 func TestComputeReconciledRoleRules(t *testing.T) {
 	tests := map[string]struct {
-		expectedRole           *rbacv1.ClusterRole
-		actualRole             *rbacv1.ClusterRole
+		expectedRole           *rbac.ClusterRole
+		actualRole             *rbac.ClusterRole
 		removeExtraPermissions bool
 
-		expectedReconciledRole       *rbacv1.ClusterRole
+		expectedReconciledRole       *rbac.ClusterRole
 		expectedReconciliationNeeded bool
 	}{
 		"empty": {
@@ -278,14 +278,14 @@ func TestComputeReconciledRoleRules(t *testing.T) {
 	}
 }
 
-func aggregatedRole(aggregationRule *rbacv1.AggregationRule) *rbacv1.ClusterRole {
-	return &rbacv1.ClusterRole{
+func aggregatedRole(aggregationRule *rbac.AggregationRule) *rbac.ClusterRole {
+	return &rbac.ClusterRole{
 		AggregationRule: aggregationRule,
 	}
 }
 
-func aggregationrule(selectors []map[string]string) *rbacv1.AggregationRule {
-	ret := &rbacv1.AggregationRule{}
+func aggregationrule(selectors []map[string]string) *rbac.AggregationRule {
+	ret := &rbac.AggregationRule{}
 	for _, selector := range selectors {
 		ret.ClusterRoleSelectors = append(ret.ClusterRoleSelectors,
 			metav1.LabelSelector{MatchLabels: selector})
@@ -295,15 +295,15 @@ func aggregationrule(selectors []map[string]string) *rbacv1.AggregationRule {
 
 func TestComputeReconciledRoleAggregationRules(t *testing.T) {
 	tests := map[string]struct {
-		expectedRole           *rbacv1.ClusterRole
-		actualRole             *rbacv1.ClusterRole
+		expectedRole           *rbac.ClusterRole
+		actualRole             *rbac.ClusterRole
 		removeExtraPermissions bool
 
-		expectedReconciledRole       *rbacv1.ClusterRole
+		expectedReconciledRole       *rbac.ClusterRole
 		expectedReconciliationNeeded bool
 	}{
 		"empty": {
-			expectedRole:           aggregatedRole(&rbacv1.AggregationRule{}),
+			expectedRole:           aggregatedRole(&rbac.AggregationRule{}),
 			actualRole:             aggregatedRole(nil),
 			removeExtraPermissions: true,
 
@@ -311,8 +311,8 @@ func TestComputeReconciledRoleAggregationRules(t *testing.T) {
 			expectedReconciliationNeeded: false,
 		},
 		"empty-2": {
-			expectedRole:           aggregatedRole(&rbacv1.AggregationRule{}),
-			actualRole:             aggregatedRole(&rbacv1.AggregationRule{}),
+			expectedRole:           aggregatedRole(&rbac.AggregationRule{}),
+			actualRole:             aggregatedRole(&rbac.AggregationRule{}),
 			removeExtraPermissions: true,
 
 			expectedReconciledRole:       nil,
@@ -348,32 +348,6 @@ func TestComputeReconciledRoleAggregationRules(t *testing.T) {
 			removeExtraPermissions: false,
 
 			expectedReconciledRole:       aggregatedRole(aggregationrule([]map[string]string{{"alpha": "bravo"}, {"foo": "bar"}})),
-			expectedReconciliationNeeded: true,
-		},
-		"unexpected aggregation": {
-			// desired role is not aggregated
-			expectedRole: role(rules("pods", "nodes", "secrets"), nil, nil),
-			// existing role is aggregated
-			actualRole:             aggregatedRole(aggregationrule([]map[string]string{{"alpha": "bravo"}})),
-			removeExtraPermissions: false,
-
-			// reconciled role should have desired permissions and not be aggregated
-			expectedReconciledRole:       role(rules("pods", "nodes", "secrets"), nil, nil),
-			expectedReconciliationNeeded: true,
-		},
-		"unexpected aggregation with differing permissions": {
-			// desired role is not aggregated
-			expectedRole: role(rules("pods", "nodes", "secrets"), nil, nil),
-			// existing role is aggregated and has other permissions
-			actualRole: func() *rbacv1.ClusterRole {
-				r := aggregatedRole(aggregationrule([]map[string]string{{"alpha": "bravo"}}))
-				r.Rules = rules("deployments")
-				return r
-			}(),
-			removeExtraPermissions: false,
-
-			// reconciled role should have aggregation removed, preserve differing permissions, and include desired permissions
-			expectedReconciledRole:       role(rules("deployments", "pods", "nodes", "secrets"), nil, nil),
 			expectedReconciliationNeeded: true,
 		},
 	}

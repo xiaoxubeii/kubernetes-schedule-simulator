@@ -34,7 +34,6 @@ var class2Parameters = map[string]string{
 	"param2": "value2",
 }
 var deleteReclaimPolicy = v1.PersistentVolumeReclaimDelete
-var modeImmediate = storage.VolumeBindingImmediate
 var storageClasses = []*storage.StorageClass{
 	{
 		TypeMeta: metav1.TypeMeta{
@@ -45,10 +44,9 @@ var storageClasses = []*storage.StorageClass{
 			Name: "gold",
 		},
 
-		Provisioner:       mockPluginName,
-		Parameters:        class1Parameters,
-		ReclaimPolicy:     &deleteReclaimPolicy,
-		VolumeBindingMode: &modeImmediate,
+		Provisioner:   mockPluginName,
+		Parameters:    class1Parameters,
+		ReclaimPolicy: &deleteReclaimPolicy,
 	},
 	{
 		TypeMeta: metav1.TypeMeta{
@@ -57,10 +55,9 @@ var storageClasses = []*storage.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "silver",
 		},
-		Provisioner:       mockPluginName,
-		Parameters:        class2Parameters,
-		ReclaimPolicy:     &deleteReclaimPolicy,
-		VolumeBindingMode: &modeImmediate,
+		Provisioner:   mockPluginName,
+		Parameters:    class2Parameters,
+		ReclaimPolicy: &deleteReclaimPolicy,
 	},
 	{
 		TypeMeta: metav1.TypeMeta{
@@ -69,10 +66,9 @@ var storageClasses = []*storage.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "external",
 		},
-		Provisioner:       "vendor.com/my-volume",
-		Parameters:        class1Parameters,
-		ReclaimPolicy:     &deleteReclaimPolicy,
-		VolumeBindingMode: &modeImmediate,
+		Provisioner:   "vendor.com/my-volume",
+		Parameters:    class1Parameters,
+		ReclaimPolicy: &deleteReclaimPolicy,
 	},
 	{
 		TypeMeta: metav1.TypeMeta{
@@ -81,10 +77,9 @@ var storageClasses = []*storage.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "unknown-internal",
 		},
-		Provisioner:       "kubernetes.io/unknown",
-		Parameters:        class1Parameters,
-		ReclaimPolicy:     &deleteReclaimPolicy,
-		VolumeBindingMode: &modeImmediate,
+		Provisioner:   "kubernetes.io/unknown",
+		Parameters:    class1Parameters,
+		ReclaimPolicy: &deleteReclaimPolicy,
 	},
 	{
 		TypeMeta: metav1.TypeMeta{
@@ -93,11 +88,10 @@ var storageClasses = []*storage.StorageClass{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "unsupported-mountoptions",
 		},
-		Provisioner:       mockPluginName,
-		Parameters:        class1Parameters,
-		ReclaimPolicy:     &deleteReclaimPolicy,
-		MountOptions:      []string{"foo"},
-		VolumeBindingMode: &modeImmediate,
+		Provisioner:   mockPluginName,
+		Parameters:    class1Parameters,
+		ReclaimPolicy: &deleteReclaimPolicy,
+		MountOptions:  []string{"foo"},
 	},
 }
 
@@ -172,13 +166,13 @@ func TestProvisionSync(t *testing.T) {
 		{
 			// No provisioning if there is a matching volume available
 			"11-6 - provisioning when there is a volume available",
-			newVolumeArray("volume11-6", "1Gi", "", "", v1.VolumeAvailable, v1.PersistentVolumeReclaimRetain, classGold),
+			newVolumeArray("volume11-6", "1Gi", "", "", v1.VolumePending, v1.PersistentVolumeReclaimRetain, classGold),
 			newVolumeArray("volume11-6", "1Gi", "uid11-6", "claim11-6", v1.VolumeBound, v1.PersistentVolumeReclaimRetain, classGold, annBoundByController),
 			newClaimArray("claim11-6", "uid11-6", "1Gi", "", v1.ClaimPending, &classGold),
 			newClaimArray("claim11-6", "uid11-6", "1Gi", "volume11-6", v1.ClaimBound, &classGold, annBoundByController, annBindCompleted),
 			noevents, noerrors,
 			// No provisioning plugin confingure - makes the test fail when
-			// the controller erroneously tries to provision something
+			// the controller errorneously tries to provision something
 			wrapTestWithProvisionCalls([]provisionCall{provision1Success}, testSyncClaim),
 		},
 		{
@@ -422,7 +416,7 @@ func TestProvisionSync(t *testing.T) {
 			noerrors, wrapTestWithProvisionCalls([]provisionCall{}, testSyncClaim),
 		},
 	}
-	runSyncTests(t, tests, storageClasses, []*v1.Pod{})
+	runSyncTests(t, tests, storageClasses)
 }
 
 // Test multiple calls to syncClaim/syncVolume and periodic sync of all

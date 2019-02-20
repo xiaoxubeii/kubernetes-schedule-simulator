@@ -21,7 +21,6 @@ type ListOpts struct {
 	Name         string `q:"name"`
 	AdminStateUp *bool  `q:"admin_state_up"`
 	TenantID     string `q:"tenant_id"`
-	ProjectID    string `q:"project_id"`
 	Shared       *bool  `q:"shared"`
 	ID           string `q:"id"`
 	Marker       string `q:"marker"`
@@ -67,12 +66,10 @@ type CreateOptsBuilder interface {
 
 // CreateOpts represents options used to create a network.
 type CreateOpts struct {
-	AdminStateUp          *bool    `json:"admin_state_up,omitempty"`
-	Name                  string   `json:"name,omitempty"`
-	Shared                *bool    `json:"shared,omitempty"`
-	TenantID              string   `json:"tenant_id,omitempty"`
-	ProjectID             string   `json:"project_id,omitempty"`
-	AvailabilityZoneHints []string `json:"availability_zone_hints,omitempty"`
+	AdminStateUp *bool  `json:"admin_state_up,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Shared       *bool  `json:"shared,omitempty"`
+	TenantID     string `json:"tenant_id,omitempty"`
 }
 
 // ToNetworkCreateMap builds a request body from CreateOpts.

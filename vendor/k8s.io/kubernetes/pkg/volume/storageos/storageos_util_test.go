@@ -30,7 +30,7 @@ import (
 	"testing"
 )
 
-var testAPISecretName = "storageos-api"
+var testApiSecretName = "storageos-api"
 var testVolName = "storageos-test-vol"
 var testPVName = "storageos-test-pv"
 var testNamespace = "storageos-test-namespace"
@@ -108,9 +108,6 @@ func (f fakeAPI) VolumeUnmount(opts storageostypes.VolumeUnmountOptions) error {
 func (f fakeAPI) VolumeDelete(opts storageostypes.DeleteOptions) error {
 	return nil
 }
-func (f fakeAPI) Controller(ref string) (*storageostypes.Controller, error) {
-	return &storageostypes.Controller{}, nil
-}
 
 func TestCreateVolume(t *testing.T) {
 
@@ -133,8 +130,8 @@ func TestCreateVolume(t *testing.T) {
 	}
 
 	options := volume.VolumeOptions{
-		PVName:                        testPVName,
-		PVC:                           volumetest.CreateTestPVC(fmt.Sprintf("%dGi", testSize), []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce}),
+		PVName: testPVName,
+		PVC:    volumetest.CreateTestPVC(fmt.Sprintf("%dGi", testSize), []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce}),
 		PersistentVolumeReclaimPolicy: v1.PersistentVolumeReclaimDelete,
 	}
 
@@ -184,9 +181,9 @@ func TestCreateVolume(t *testing.T) {
 	if len(vol.Labels) == 0 {
 		t.Error("CreateVolume() Labels are empty")
 	} else {
-		var val string
-		var ok bool
 		for k, v := range labels {
+			var val string
+			var ok bool
 			if val, ok = vol.Labels[k]; !ok {
 				t.Errorf("CreateVolume() Label %s not set", k)
 			}
@@ -194,6 +191,8 @@ func TestCreateVolume(t *testing.T) {
 				t.Errorf("CreateVolume() returned unexpected Label value %s", val)
 			}
 		}
+		var val string
+		var ok bool
 		if val, ok = vol.Labels["labelfromapi"]; !ok {
 			t.Error("CreateVolume() Label from api not set")
 		}
@@ -225,7 +224,7 @@ func TestAttachVolume(t *testing.T) {
 			mounter:      &mount.FakeMounter{},
 			plugin:       plug.(*storageosPlugin),
 		},
-		deviceDir: tmpDir,
+		devicePath: tmpDir,
 	}
 	if err != nil {
 		t.Errorf("Failed to make a new Mounter: %v", err)

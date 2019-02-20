@@ -20,9 +20,9 @@ import (
 	"fmt"
 	"strings"
 
-	policy "k8s.io/api/policy/v1beta1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/apis/extensions"
 )
 
 const (
@@ -40,102 +40,102 @@ func GetAllFSTypesExcept(exceptions ...string) sets.String {
 func GetAllFSTypesAsSet() sets.String {
 	fstypes := sets.NewString()
 	fstypes.Insert(
-		string(policy.HostPath),
-		string(policy.AzureFile),
-		string(policy.Flocker),
-		string(policy.FlexVolume),
-		string(policy.EmptyDir),
-		string(policy.GCEPersistentDisk),
-		string(policy.AWSElasticBlockStore),
-		string(policy.GitRepo),
-		string(policy.Secret),
-		string(policy.NFS),
-		string(policy.ISCSI),
-		string(policy.Glusterfs),
-		string(policy.PersistentVolumeClaim),
-		string(policy.RBD),
-		string(policy.Cinder),
-		string(policy.CephFS),
-		string(policy.DownwardAPI),
-		string(policy.FC),
-		string(policy.ConfigMap),
-		string(policy.VsphereVolume),
-		string(policy.Quobyte),
-		string(policy.AzureDisk),
-		string(policy.PhotonPersistentDisk),
-		string(policy.StorageOS),
-		string(policy.Projected),
-		string(policy.PortworxVolume),
-		string(policy.ScaleIO),
-		string(policy.CSI),
+		string(extensions.HostPath),
+		string(extensions.AzureFile),
+		string(extensions.Flocker),
+		string(extensions.FlexVolume),
+		string(extensions.EmptyDir),
+		string(extensions.GCEPersistentDisk),
+		string(extensions.AWSElasticBlockStore),
+		string(extensions.GitRepo),
+		string(extensions.Secret),
+		string(extensions.NFS),
+		string(extensions.ISCSI),
+		string(extensions.Glusterfs),
+		string(extensions.PersistentVolumeClaim),
+		string(extensions.RBD),
+		string(extensions.Cinder),
+		string(extensions.CephFS),
+		string(extensions.DownwardAPI),
+		string(extensions.FC),
+		string(extensions.ConfigMap),
+		string(extensions.VsphereVolume),
+		string(extensions.Quobyte),
+		string(extensions.AzureDisk),
+		string(extensions.PhotonPersistentDisk),
+		string(extensions.StorageOS),
+		string(extensions.Projected),
+		string(extensions.PortworxVolume),
+		string(extensions.ScaleIO),
+		string(extensions.CSI),
 	)
 	return fstypes
 }
 
 // getVolumeFSType gets the FSType for a volume.
-func GetVolumeFSType(v api.Volume) (policy.FSType, error) {
+func GetVolumeFSType(v api.Volume) (extensions.FSType, error) {
 	switch {
 	case v.HostPath != nil:
-		return policy.HostPath, nil
+		return extensions.HostPath, nil
 	case v.EmptyDir != nil:
-		return policy.EmptyDir, nil
+		return extensions.EmptyDir, nil
 	case v.GCEPersistentDisk != nil:
-		return policy.GCEPersistentDisk, nil
+		return extensions.GCEPersistentDisk, nil
 	case v.AWSElasticBlockStore != nil:
-		return policy.AWSElasticBlockStore, nil
+		return extensions.AWSElasticBlockStore, nil
 	case v.GitRepo != nil:
-		return policy.GitRepo, nil
+		return extensions.GitRepo, nil
 	case v.Secret != nil:
-		return policy.Secret, nil
+		return extensions.Secret, nil
 	case v.NFS != nil:
-		return policy.NFS, nil
+		return extensions.NFS, nil
 	case v.ISCSI != nil:
-		return policy.ISCSI, nil
+		return extensions.ISCSI, nil
 	case v.Glusterfs != nil:
-		return policy.Glusterfs, nil
+		return extensions.Glusterfs, nil
 	case v.PersistentVolumeClaim != nil:
-		return policy.PersistentVolumeClaim, nil
+		return extensions.PersistentVolumeClaim, nil
 	case v.RBD != nil:
-		return policy.RBD, nil
+		return extensions.RBD, nil
 	case v.FlexVolume != nil:
-		return policy.FlexVolume, nil
+		return extensions.FlexVolume, nil
 	case v.Cinder != nil:
-		return policy.Cinder, nil
+		return extensions.Cinder, nil
 	case v.CephFS != nil:
-		return policy.CephFS, nil
+		return extensions.CephFS, nil
 	case v.Flocker != nil:
-		return policy.Flocker, nil
+		return extensions.Flocker, nil
 	case v.DownwardAPI != nil:
-		return policy.DownwardAPI, nil
+		return extensions.DownwardAPI, nil
 	case v.FC != nil:
-		return policy.FC, nil
+		return extensions.FC, nil
 	case v.AzureFile != nil:
-		return policy.AzureFile, nil
+		return extensions.AzureFile, nil
 	case v.ConfigMap != nil:
-		return policy.ConfigMap, nil
+		return extensions.ConfigMap, nil
 	case v.VsphereVolume != nil:
-		return policy.VsphereVolume, nil
+		return extensions.VsphereVolume, nil
 	case v.Quobyte != nil:
-		return policy.Quobyte, nil
+		return extensions.Quobyte, nil
 	case v.AzureDisk != nil:
-		return policy.AzureDisk, nil
+		return extensions.AzureDisk, nil
 	case v.PhotonPersistentDisk != nil:
-		return policy.PhotonPersistentDisk, nil
+		return extensions.PhotonPersistentDisk, nil
 	case v.StorageOS != nil:
-		return policy.StorageOS, nil
+		return extensions.StorageOS, nil
 	case v.Projected != nil:
-		return policy.Projected, nil
+		return extensions.Projected, nil
 	case v.PortworxVolume != nil:
-		return policy.PortworxVolume, nil
+		return extensions.PortworxVolume, nil
 	case v.ScaleIO != nil:
-		return policy.ScaleIO, nil
+		return extensions.ScaleIO, nil
 	}
 
 	return "", fmt.Errorf("unknown volume type for volume: %#v", v)
 }
 
 // FSTypeToStringSet converts an FSType slice to a string set.
-func FSTypeToStringSet(fsTypes []policy.FSType) sets.String {
+func FSTypeToStringSet(fsTypes []extensions.FSType) sets.String {
 	set := sets.NewString()
 	for _, v := range fsTypes {
 		set.Insert(string(v))
@@ -144,19 +144,19 @@ func FSTypeToStringSet(fsTypes []policy.FSType) sets.String {
 }
 
 // PSPAllowsAllVolumes checks for FSTypeAll in the psp's allowed volumes.
-func PSPAllowsAllVolumes(psp *policy.PodSecurityPolicy) bool {
-	return PSPAllowsFSType(psp, policy.All)
+func PSPAllowsAllVolumes(psp *extensions.PodSecurityPolicy) bool {
+	return PSPAllowsFSType(psp, extensions.All)
 }
 
 // PSPAllowsFSType is a utility for checking if a PSP allows a particular FSType.
 // If all volumes are allowed then this will return true for any FSType passed.
-func PSPAllowsFSType(psp *policy.PodSecurityPolicy, fsType policy.FSType) bool {
+func PSPAllowsFSType(psp *extensions.PodSecurityPolicy, fsType extensions.FSType) bool {
 	if psp == nil {
 		return false
 	}
 
 	for _, v := range psp.Spec.Volumes {
-		if v == fsType || v == policy.All {
+		if v == fsType || v == extensions.All {
 			return true
 		}
 	}
@@ -164,38 +164,34 @@ func PSPAllowsFSType(psp *policy.PodSecurityPolicy, fsType policy.FSType) bool {
 }
 
 // UserFallsInRange is a utility to determine it the id falls in the valid range.
-func UserFallsInRange(id int64, rng policy.IDRange) bool {
+func UserFallsInRange(id int64, rng extensions.UserIDRange) bool {
 	return id >= rng.Min && id <= rng.Max
 }
 
 // GroupFallsInRange is a utility to determine it the id falls in the valid range.
-func GroupFallsInRange(id int64, rng policy.IDRange) bool {
+func GroupFallsInRange(id int64, rng extensions.GroupIDRange) bool {
 	return id >= rng.Min && id <= rng.Max
 }
 
 // AllowsHostVolumePath is a utility for checking if a PSP allows the host volume path.
 // This only checks the path. You should still check to make sure the host volume fs type is allowed.
-func AllowsHostVolumePath(psp *policy.PodSecurityPolicy, hostPath string) (pathIsAllowed, mustBeReadOnly bool) {
+func AllowsHostVolumePath(psp *extensions.PodSecurityPolicy, hostPath string) bool {
 	if psp == nil {
-		return false, false
+		return false
 	}
 
 	// If no allowed paths are specified then allow any path
 	if len(psp.Spec.AllowedHostPaths) == 0 {
-		return true, false
+		return true
 	}
 
 	for _, allowedPath := range psp.Spec.AllowedHostPaths {
 		if hasPathPrefix(hostPath, allowedPath.PathPrefix) {
-			if !allowedPath.ReadOnly {
-				return true, allowedPath.ReadOnly
-			}
-			pathIsAllowed = true
-			mustBeReadOnly = true
+			return true
 		}
 	}
 
-	return pathIsAllowed, mustBeReadOnly
+	return false
 }
 
 // hasPathPrefix returns true if the string matches pathPrefix exactly, or if is prefixed with pathPrefix at a path segment boundary
@@ -225,18 +221,4 @@ func hasPathPrefix(s, pathPrefix string) bool {
 	}
 
 	return false
-}
-
-// EqualStringSlices compares string slices for equality. Slices are equal when
-// their sizes and elements on similar positions are equal.
-func EqualStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
