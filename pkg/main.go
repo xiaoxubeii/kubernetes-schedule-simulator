@@ -114,9 +114,9 @@ func getNodeCheckPoint() ([]*v1.Node, error) {
 
 func createSampleResource() ([]*v1.Node, []*v1.Pod, error) {
 	podRes := schedulercache.Resource{MilliCPU: 1 * CPU, Memory: 1 * GB}
-	pods := createSamplePods(100, podRes)
+	pods := createSamplePods(2, podRes)
 	nodeRes := schedulercache.Resource{MilliCPU: 1 * CPU, Memory: 1 * GB, AllowedPodNumber: 1000}
-	nodes := createSampleNodes(99, nodeRes)
+	nodes := createSampleNodes(2, nodeRes)
 	return nodes, pods, nil
 }
 
