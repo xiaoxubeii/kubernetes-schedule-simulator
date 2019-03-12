@@ -1,0 +1,19 @@
+- name: A
+  num: 10
+  pod:
+    spec:
+      containers:
+      - resources:
+          requests:
+            cpu: 1
+            memory: 1
+- name: B
+  num: 10
+  pod:
+    spec:
+      containers:
+      - resources:
+          requests:
+            cpu: 100 
+            memory: 1000
+

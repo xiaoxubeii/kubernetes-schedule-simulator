@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -296,7 +297,7 @@ func (c *RESTClient) request(verb string) *restclient.Request {
 		serializers.Framer = info.StreamSerializer.Framer
 	}
 
-	return restclient.NewRequest(c, verb, &url.URL{Host: "localhost"}, "", config, serializers, nil, nil)
+	return restclient.NewRequest(c, verb, &url.URL{Host: "localhost"}, "", config, serializers, nil, nil, time.Second*30)
 }
 
 // splitPath returns the segments for a URL path.

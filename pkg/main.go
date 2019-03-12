@@ -4,15 +4,22 @@ import (
 	"encoding/json"
 	"flag"
 	"io/ioutil"
+	"os"
+	"path/filepath"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/golang/glog"
 	"github.com/google/uuid"
-	"github.com/xiaoxubeii/kubernetes-schedule-simulator/cmd/cluster-capacity/app/options"
 	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/framework"
 	"github.com/xiaoxubeii/kubernetes-schedule-simulator/pkg/scheduler"
 	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/kubernetes/plugin/pkg/scheduler/schedulercache"
+	schedapp "k8s.io/kubernetes/cmd/kube-scheduler/app"
+	"k8s.io/kubernetes/pkg/apis/componentconfig"
+	"k8s.io/kubernetes/pkg/scheduler/schedulercache"
 )
 
 var (
@@ -24,27 +31,85 @@ var (
 func main() {
 	flag.Parse()
 	defer glog.Flush()
-	opts := options.NewClusterCapacityOptions()
-	conf := options.NewClusterCapacityConfig(opts)
-	nodes, pods, _ := createSampleResource()
+	pods := make([]v1.Pod, 0)
+	nodes := make([]v1.Node, 0)
+	newPods := make([]*v1.Pod, 0)
 
-	err := conf.SetDefaultScheduler()
+	// TODO
+	syncCheckPoints := true
+	namespace := ""
+	// podA := schedulercache.Resource{MilliCPU: 9 * CPU, Memory: 43 * GB}
+	// podBRes := schedulercache.Resource{MilliCPU: 5 * CPU, Memory: 18 * GB}
+	// podB := createSamplePods(100, podBRes)
+	podARes := schedulercache.Resource{MilliCPU: 9 * CPU, Memory: 43 * GB}
+	podA := createSamplePods(100, podARes)
+	newPods = append(newPods, podA...)
+
+	var kubeconfig *string
+	if home := homeDir(); home != "" {
+		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+	} else {
+		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+	}
+
+	if syncCheckPoints {
+		// use the current context in kubeconfig
+		config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+		if err != nil {
+			glog.Fatalf("Failed to get config: %v", err)
+		}
+		// create the clientset
+		clientset, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			glog.Fatalf("Failed to create clientset: %v", err)
+		}
+
+		// nodes, pods, _ := createSampleResource()
+		glog.V(1).Infoln("Begin to get checkpoints")
+		pods, nodes, err = getCheckpoints(clientset, namespace)
+		if err != nil {
+			glog.Fatalf("Failed to get checkpoints: %v", err)
+		}
+	}
+
+	provider := "TalkintDataProvider"
+	conf := &componentconfig.KubeSchedulerConfiguration{
+		SchedulerName:                  "test",
+		AlgorithmSource:                componentconfig.SchedulerAlgorithmSource{Provider: &provider},
+		HardPodAffinitySymmetricWeight: 10,
+	}
+	newScheduler, err := schedapp.NewSchedulerServer(conf, "localhost")
 	if err != nil {
-		glog.Fatalf("Failed to create default scheduler server: %v ", err)
+		glog.Fatalf("Failed to create scheduler server: %v", err)
 	}
 
-	report, err := runSimulator(conf, pods, nodes)
+	report, err := runSimulator(newScheduler, pods, nodes, newPods)
 	if err != nil {
-		glog.Fatalf("Failed to start scheduler simulator", err)
+		glog.Fatalf("Failed to start scheduler simulator: %v", err)
 	}
 
-	if err := framework.ClusterCapacityReviewPrint(report, true, conf.Options.OutputFormat); err != nil {
-		glog.Fatalf("Error while printing: %v", err)
-	}
+	framework.ClusterCapacityReviewPrint(report)
 }
 
-func runSimulator(s *options.ClusterCapacityConfig, pods []*v1.Pod, nodes []*v1.Node) (*framework.ClusterCapacityReview, error) {
-	cc, err := scheduler.New(s.DefaultScheduler, pods, nodes)
+func getCheckpoints(clientset *kubernetes.Clientset, namespace string) ([]v1.Pod, []v1.Node, error) {
+	pods, err := clientset.CoreV1().Pods(namespace).List(metav1.ListOptions{FieldSelector: "status.phase=Running"})
+	if err != nil {
+		return nil, nil, err
+	}
+	glog.V(1).Infof("Get scheduled pods num: %v", len(pods.Items))
+
+	// TODO
+	nodes, err := clientset.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	glog.V(1).Infof("Get nodes num: %v", len(nodes.Items))
+
+	return pods.Items, nodes.Items, err
+}
+
+func runSimulator(server *schedapp.SchedulerServer, pods []v1.Pod, nodes []v1.Node, newPods []*v1.Pod) (*framework.GeneralReview, error) {
+	cc, err := scheduler.New(server, newPods, pods, nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +121,7 @@ func runSimulator(s *options.ClusterCapacityConfig, pods []*v1.Pod, nodes []*v1.
 		}
 	}*/
 
+	glog.V(1).Infoln("Begin to schedule")
 	err = cc.Run()
 	if err != nil {
 		return nil, err
@@ -162,4 +228,11 @@ func newSampleNode(usage schedulercache.Resource) *v1.Node {
 			Capacity:    usage.ResourceList(),
 			Allocatable: usage.ResourceList(),
 		}}
+}
+
+func homeDir() string {
+	if h := os.Getenv("HOME"); h != "" {
+		return h
+	}
+	return os.Getenv("USERPROFILE") // windows
 }

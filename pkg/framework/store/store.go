@@ -217,16 +217,16 @@ type PodQueue struct {
 func (q *PodQueue) Add(pod *v1.Pod) {
 	q.lock.Lock()
 	q.queue = append(q.queue, pod)
-	q.lock.Unlock()
+	defer q.lock.Unlock()
 }
 
 func (q *PodQueue) Pop() *v1.Pod {
 	q.lock.Lock()
+	defer q.lock.Unlock()
 	lastIndex := len(q.queue) - 1
 	if lastIndex >= 0 {
 		pod := q.queue[lastIndex]
 		q.queue = q.queue[:lastIndex]
-		q.lock.Unlock()
 		return pod
 	}
 	return nil

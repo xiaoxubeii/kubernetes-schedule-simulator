@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"k8s.io/api/core/v1"
+	store "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -31,6 +32,7 @@ const (
 	Nodes                  ResourceType = "nodes"
 	Services               ResourceType = "services"
 	PersistentVolumeClaims ResourceType = "persistentvolumeclaims"
+	StorageClasses         ResourceType = "storageclasses"
 )
 
 func (r ResourceType) String() string {
@@ -49,6 +51,8 @@ func (r ResourceType) ObjectType() runtime.Object {
 		return &v1.Service{}
 	case "persistentvolumeclaims":
 		return &v1.PersistentVolumeClaim{}
+	case "storageclasses":
+		return &store.StorageClass{}
 	}
 	return nil
 }
@@ -65,7 +69,15 @@ func StringToResourceType(resource string) (ResourceType, error) {
 		return Services, nil
 	case "persistentvolumeclaims":
 		return PersistentVolumeClaims, nil
+	case "storageclasses":
+		return StorageClasses, nil
 	default:
 		return "", fmt.Errorf("Resource type %v not recognized", resource)
 	}
+}
+
+type SimulationPod struct {
+	Name string `json:"name"`
+	Pod  v1.Pod `json:"pod"`
+	Num  int    `json:"num"`
 }

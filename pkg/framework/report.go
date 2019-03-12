@@ -17,14 +17,15 @@ limitations under the License.
 package framework
 
 import (
-	"encoding/json"
 	"fmt"
+	"os"
+
+	"github.com/olekukonko/tablewriter"
 
 	//"strconv"
 	"strings"
 	"time"
 
-	"github.com/ghodss/yaml"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
@@ -34,48 +35,35 @@ import (
 
 type ClusterCapacityReview struct {
 	unversioned.TypeMeta
-	Spec   ClusterCapacityReviewSpec
-	Status ClusterCapacityReviewStatus
+	Spec   *ClusterCapacityReviewSpec
+	Status *ClusterCapacityReviewStatus
+}
+
+type GeneralReview struct {
+	Review     map[string]*ClusterCapacityReview
+	FailReason *ClusterCapacityReviewScheduleFailReason
 }
 
 type ClusterCapacityReviewSpec struct {
 	// the pod desired for scheduling
-	Templates []v1.Pod
-
-	// desired number of replicas that should be scheduled
-	// +optional
-	Replicas int32
-
+	Pods            []*v1.Pod
 	PodRequirements []*Requirements
 }
 
 type ClusterCapacityReviewStatus struct {
 	CreationTimestamp time.Time
-	// actual number of replicas that could schedule
-	Replicas int32
-
-	FailReason *ClusterCapacityReviewScheduleFailReason
-
 	// per node information about the scheduling simulation
-	Pods []*ClusterCapacityReviewResult
+	Pods          []*PodReviewResult
+	ReasonSummary map[string][]*PodReviewResult
 }
 
-type ClusterCapacityReviewResult struct {
-	PodName string
-	// numbers of replicas on nodes
-	ReplicasOnNodes []*ReplicasOnNode
-	// reason why no more pods could schedule (if any on this node)
-	FailSummary []FailReasonSummary
-}
-
-type ReplicasOnNode struct {
-	NodeName string
-	Replicas int
-}
-
-type FailReasonSummary struct {
-	Reason string
-	Count  int
+type PodReviewResult struct {
+	PodUID    string
+	Host      string
+	PodName   string
+	Reason    string
+	Resources *Resources
+	// Message string
 }
 
 type Resources struct {
@@ -140,42 +128,6 @@ func getResourceRequest(pod *v1.Pod) *Resources {
 	return &result
 }
 
-func parsePodsReview(templatePods []*v1.Pod, status Status) []*ClusterCapacityReviewResult {
-	templatesCount := len(templatePods)
-	result := make([]*ClusterCapacityReviewResult, 0)
-
-	for i := 0; i < templatesCount; i++ {
-		result = append(result, &ClusterCapacityReviewResult{
-			ReplicasOnNodes: make([]*ReplicasOnNode, 0),
-			PodName:         templatePods[i].Name,
-		})
-	}
-
-	for i, pod := range status.Pods {
-		nodeName := pod.Spec.NodeName
-		first := true
-		for _, sum := range result[i%templatesCount].ReplicasOnNodes {
-			if sum.NodeName == nodeName {
-				sum.Replicas++
-				first = false
-			}
-		}
-		if first {
-			result[i%templatesCount].ReplicasOnNodes = append(result[i%templatesCount].ReplicasOnNodes, &ReplicasOnNode{
-				NodeName: nodeName,
-				Replicas: 1,
-			})
-		}
-	}
-
-	slicedMessage := strings.Split(status.StopReason, "\n")
-	if len(slicedMessage) == 1 {
-		return result
-	}
-
-	return result
-}
-
 func getPodsRequirements(pods []*v1.Pod) []*Requirements {
 	result := make([]*Requirements, 0)
 	for _, pod := range pods {
@@ -189,132 +141,105 @@ func getPodsRequirements(pods []*v1.Pod) []*Requirements {
 	return result
 }
 
-func deepCopyPods(in []*v1.Pod, out []v1.Pod) {
-	for i, pod := range in {
-		out[i] = *pod.DeepCopy()
+func getReviewSpec(pods []*v1.Pod) *ClusterCapacityReviewSpec {
+	return &ClusterCapacityReviewSpec{
+		Pods:            pods,
+		PodRequirements: getPodsRequirements(pods),
 	}
 }
 
-func getReviewSpec(podTemplates []*v1.Pod) ClusterCapacityReviewSpec {
-
-	podCopies := make([]v1.Pod, len(podTemplates))
-	deepCopyPods(podTemplates, podCopies)
-	return ClusterCapacityReviewSpec{
-		Templates:       podCopies,
-		PodRequirements: getPodsRequirements(podTemplates),
-	}
-}
-
-func getReviewStatus(pods []*v1.Pod, status Status) ClusterCapacityReviewStatus {
-	return ClusterCapacityReviewStatus{
-		CreationTimestamp: time.Now(),
-		Replicas:          int32(len(status.Pods)),
-		FailReason:        getMainFailReason(status.StopReason),
-		Pods:              parsePodsReview(pods, status),
-	}
-}
-
-func GetReport(pods []*v1.Pod, status Status) *ClusterCapacityReview {
-	return &ClusterCapacityReview{
-		Spec:   getReviewSpec(pods),
-		Status: getReviewStatus(pods, status),
-	}
-}
-
-func instancesSum(replicasOnNodes []*ReplicasOnNode) int {
-	result := 0
-	for _, v := range replicasOnNodes {
-		result += v.Replicas
-	}
-	return result
-}
-
-func clusterCapacityReviewPrettyPrint(r *ClusterCapacityReview, verbose bool) {
-	if verbose {
-		for _, req := range r.Spec.PodRequirements {
-			fmt.Printf("%v pod requirements:\n", req.PodName)
-			fmt.Printf("\t- CPU: %v\n", req.Resources.PrimaryResources.Cpu().String())
-			fmt.Printf("\t- Memory: %v\n", req.Resources.PrimaryResources.Memory().String())
-			if !req.Resources.PrimaryResources.NvidiaGPU().IsZero() {
-				fmt.Printf("\t- NvidiaGPU: %v\n", req.Resources.PrimaryResources.NvidiaGPU().String())
-			}
-			if req.Resources.ScalarResources != nil {
-				fmt.Printf("\t- ScalarResources: %v\n", req.Resources.ScalarResources)
-			}
-
-			if req.NodeSelectors != nil {
-				fmt.Printf("\t- NodeSelector: %v\n", labels.SelectorFromSet(labels.Set(req.NodeSelectors)).String())
-			}
-			fmt.Printf("\n")
+func getReviewStatus(pods []*v1.Pod) *ClusterCapacityReviewStatus {
+	reasonSummary := make(map[string][]*PodReviewResult)
+	prrs := make([]*PodReviewResult, 0)
+	for _, p := range pods {
+		prr := &PodReviewResult{PodUID: string(p.UID), PodName: p.Name, Host: p.Spec.NodeName, Reason: p.Status.Reason,
+			Resources: getResourceRequest(p)}
+		if _, ok := reasonSummary[prr.Reason]; !ok {
+			reasonSummary[prr.Reason] = make([]*PodReviewResult, 0)
 		}
+		reasonSummary[prr.Reason] = append(reasonSummary[prr.Reason], prr)
+		prrs = append(prrs, prr)
 	}
 
-	for _, pod := range r.Status.Pods {
-		if verbose {
-			fmt.Printf("The cluster can schedule %v instance(s) of the pod %v.\n", instancesSum(pod.ReplicasOnNodes), pod.PodName)
-		} else {
-			fmt.Printf("%v\n", instancesSum(pod.ReplicasOnNodes))
-		}
-	}
+	return &ClusterCapacityReviewStatus{CreationTimestamp: time.Now(), Pods: prrs, ReasonSummary: reasonSummary}
 
-	if verbose {
-		fmt.Printf("\nTermination reason: %v: %v\n", r.Status.FailReason.FailType, r.Status.FailReason.FailMessage)
-	}
+}
 
-	if verbose && r.Status.Replicas > 0 {
-		for _, pod := range r.Status.Pods {
-			if pod.FailSummary != nil {
-				fmt.Printf("fit failure summary on nodes: ")
-				for _, fs := range pod.FailSummary {
-					fmt.Printf("%v (%v), ", fs.Reason, fs.Count)
-				}
-				fmt.Printf("\n")
-			}
+func GetReport(status Status) *GeneralReview {
+	rm := make(map[string]*ClusterCapacityReview)
+	rm["failed"] = &ClusterCapacityReview{Spec: getReviewSpec(status.FailedPods), Status: getReviewStatus(status.FailedPods)}
+	rm["success"] = &ClusterCapacityReview{Spec: getReviewSpec(status.SuccessfulPods), Status: getReviewStatus(status.SuccessfulPods)}
+	rm["scheduled"] = &ClusterCapacityReview{Spec: getReviewSpec(status.ScheduledPods), Status: getReviewStatus(status.ScheduledPods)}
+	return &GeneralReview{Review: rm, FailReason: &ClusterCapacityReviewScheduleFailReason{FailType: "Stopped", FailMessage: status.StopReason}}
+}
+
+func specPrint(spec *ClusterCapacityReviewSpec) {
+	for _, req := range spec.PodRequirements {
+		fmt.Printf("%v pod requirements:\n", req.PodName)
+		fmt.Printf("\t- CPU: %v\n", req.Resources.PrimaryResources.Cpu().String())
+		fmt.Printf("\t- Memory: %v\n", req.Resources.PrimaryResources.Memory().String())
+		if !req.Resources.PrimaryResources.NvidiaGPU().IsZero() {
+			fmt.Printf("\t- NvidiaGPU: %v\n", req.Resources.PrimaryResources.NvidiaGPU().String())
 		}
-		fmt.Printf("\nPod distribution among nodes:\n")
-		for _, pod := range r.Status.Pods {
-			fmt.Printf("%v\n", pod.PodName)
-			for _, ron := range pod.ReplicasOnNodes {
-				fmt.Printf("\t- %v: %v instance(s)\n", ron.NodeName, ron.Replicas)
-			}
+		if req.Resources.ScalarResources != nil {
+			fmt.Printf("\t- ScalarResources: %v\n", req.Resources.ScalarResources)
 		}
+
+		if req.NodeSelectors != nil {
+			fmt.Printf("\t- NodeSelector: %v\n", labels.SelectorFromSet(labels.Set(req.NodeSelectors)).String())
+		}
+		fmt.Printf("\n")
 	}
 }
 
-func clusterCapacityReviewPrintJson(r *ClusterCapacityReview) error {
-	jsoned, err := json.Marshal(r)
-	if err != nil {
-		return fmt.Errorf("Failed to create json: %v", err)
+func statusPrint(status *ClusterCapacityReviewStatus) {
+	fmt.Println("Pods summary:")
+	for k, v := range status.ReasonSummary {
+		fmt.Printf("\t- %s: %d\n", k, len(v))
 	}
-	fmt.Println(string(jsoned))
-	return nil
 }
 
-func clusterCapacityReviewPrintYaml(r *ClusterCapacityReview) error {
-	yamled, err := yaml.Marshal(r)
-	if err != nil {
-		return fmt.Errorf("Failed to create yaml: %v", err)
-	}
-	fmt.Print(string(yamled))
-	return nil
+func printHeader(title string) {
+	fmt.Printf("================================= %s =================================\n", title)
 }
 
-func ClusterCapacityReviewPrint(r *ClusterCapacityReview, verbose bool, format string) error {
-	switch format {
-	case "json":
-		return clusterCapacityReviewPrintJson(r)
-	case "yaml":
-		return clusterCapacityReviewPrintYaml(r)
-	case "":
-		clusterCapacityReviewPrettyPrint(r, verbose)
-		return nil
-	default:
-		return fmt.Errorf("output format %q not recognized", format)
+func successPodsPrint(r *GeneralReview) {
+	review := r.Review["success"]
+	printHeader("Successful Pods")
+	distributePodsPrint(review)
+}
+
+func distributePodsPrint(r *ClusterCapacityReview) {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Requirements", "Host"})
+	data := make([][]string, 0)
+	for _, s := range r.Status.Pods {
+		data = append(data, []string{fmt.Sprintf("CPU: %s, Memory: %s", s.Resources.PrimaryResources.Cpu(), s.Resources.PrimaryResources.Memory()), s.Host})
 	}
+
+	for _, v := range data {
+		table.Append(v)
+	}
+
+	table.Render()
+}
+
+func failedPodsPrint(r *GeneralReview) {
+	review := r.Review["failed"]
+	printHeader("Failed Pods")
+	statusPrint(review.Status)
+	distributePodsPrint(review)
+}
+
+func ClusterCapacityReviewPrint(r *GeneralReview) {
+	successPodsPrint(r)
+	failedPodsPrint(r)
 }
 
 // capture all scheduled pods with reason why the analysis could not continue
 type Status struct {
-	Pods       []*v1.Pod
-	StopReason string
+	SuccessfulPods []*v1.Pod
+	FailedPods     []*v1.Pod
+	ScheduledPods  []*v1.Pod
+	StopReason     string
 }
